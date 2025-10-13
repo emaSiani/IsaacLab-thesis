@@ -11,6 +11,8 @@ import argparse
 import sys
 
 from isaaclab.app import AppLauncher
+from policy_export import export_rl_games_policy, export_environment_config # Assumendo che export_policy.py sia nella stessa dir
+
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Play a checkpoint of an RL agent from RL-Games.")
@@ -183,8 +185,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent: BasePlayer = runner.create_player()
     agent.restore(resume_path)
     agent.reset()
-
     dt = env.unwrapped.step_dt
+
+    # 1. Esporta la policy in ONNX e TorchScript (.pt)
+    export_rl_games_policy(agent, log_dir, task_name, rl_device)
+    
+    # 2. Esporta la configurazione dell'environment in YAML
+    export_environment_config(env_cfg, log_dir, task_name)
+    
+    # ----------------------------------------------------------------------
+    # Fine Codice di Esportazione
+    # ----------------------------------------------------------------------
+    
+    # reset environment
+    obs = env.reset()
 
     # reset environment
     obs = env.reset()
