@@ -121,7 +121,8 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ASSET_DIR}/franka_mimic.usd",
+            usd_path=f"source/robots/Rizon4s_with_Grav_fixed.usd",
+            #usd_path=f"{ASSET_DIR}/Rizon4s.usd",
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
@@ -142,23 +143,24 @@ class FactoryEnvCfg(DirectRLEnvCfg):
             ),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
+        # INIT_Q = [0.0, -0.698132, 0.0, 1.5708, 0.0, 0.698132, 0.0]
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
-                "panda_joint1": 0.00871,
-                "panda_joint2": -0.10368,
-                "panda_joint3": -0.00794,
-                "panda_joint4": -1.49139,
-                "panda_joint5": -0.00083,
-                "panda_joint6": 1.38774,
-                "panda_joint7": 0.0,
-                "panda_finger_joint2": 0.04,
+                "joint1": 0.0,
+                "joint2": 0.0,
+                "joint3": 0.0,
+                "joint4": 0.0,
+                "joint5": 0.0,
+                "joint6": 0.0,
+                "joint7": 0.0,
+                "finger_joint": 0.0,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         actuators={
-            "panda_arm1": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[1-4]"],
+            "rizon_arm": ImplicitActuatorCfg(
+                joint_names_expr=["joint[1-4]"],
                 stiffness=0.0,
                 damping=0.0,
                 friction=0.0,
@@ -166,8 +168,8 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 effort_limit_sim=87,
                 velocity_limit_sim=124.6,
             ),
-            "panda_arm2": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[5-7]"],
+            "rizon_wrist": ImplicitActuatorCfg(
+                joint_names_expr=["joint[5-7]"],
                 stiffness=0.0,
                 damping=0.0,
                 friction=0.0,
@@ -175,8 +177,8 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 effort_limit_sim=12,
                 velocity_limit_sim=149.5,
             ),
-            "panda_hand": ImplicitActuatorCfg(
-                joint_names_expr=["panda_finger_joint[1-2]"],
+            "rizon_hand": ImplicitActuatorCfg(
+                joint_names_expr=["finger_joint", "right_outer_finger_joint"],
                 effort_limit_sim=40.0,
                 velocity_limit_sim=0.04,
                 stiffness=7500.0,
