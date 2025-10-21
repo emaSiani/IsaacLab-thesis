@@ -33,7 +33,9 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         self.flip_quats = torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
 
         # Force sensor information.
-        self.force_sensor_body_idx = self._robot.body_names.index("force_sensor")
+         # In the Rizon 4s model, the 6DoF force/torque sensor is integrated in the flange
+        print("Is flange in body names? ", "flange" in self._robot.body_names)
+        self.force_sensor_body_idx = self._robot.body_names.index("flange")
         self.force_sensor_smooth = torch.zeros((self.num_envs, 6), device=self.device)
         self.force_sensor_world_smooth = torch.zeros((self.num_envs, 6), device=self.device)
 
@@ -267,6 +269,8 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
     def _reset_idx(self, env_ids):
         """Perform additional randomizations."""
         super()._reset_idx(env_ids)
+        print("Fingertip pos:", self.fingertip_midpoint_pos)
+        # print("Joint limits:", self._robot.joint_limits)
 
         # Compute initial action for correct EMA computation.
         fixed_pos_action_frame = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
