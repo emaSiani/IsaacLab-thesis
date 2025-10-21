@@ -55,8 +55,8 @@ class CtrlCfg:
 
     pos_action_threshold = [0.02, 0.02, 0.02]
     rot_action_threshold = [0.097, 0.097, 0.097]
-
-    reset_joints = [1.5178e-03, -1.9651e-01, -1.4364e-03, -1.9761, -2.7717e-04, 1.7796, 7.8556e-01]
+    # Default joint position, task gains, and rot deriv scale used during reset.
+    reset_joints = [0.0, -0.67, 0.4, 1.5708, 0.0, 0.698132, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
     default_task_prop_gains = [100, 100, 100, 30, 30, 30]
@@ -121,7 +121,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"source/robots/Rizon4s_with_Grav_fixed.usd",
+            usd_path=f"source/robots/Rizon4s_with_Grav.usd",
             #usd_path=f"{ASSET_DIR}/Rizon4s.usd",
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
@@ -147,11 +147,11 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
                 "joint1": 0.0,
-                "joint2": 0.0,
+                "joint2": -0.698132,
                 "joint3": 0.0,
-                "joint4": 0.0,
+                "joint4": 1.5708,
                 "joint5": 0.0,
-                "joint6": 0.0,
+                "joint6": 0.698132,
                 "joint7": 0.0,
                 "finger_joint": 0.0,
             },
@@ -178,7 +178,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 velocity_limit_sim=149.5,
             ),
             "rizon_hand": ImplicitActuatorCfg(
-                joint_names_expr=["finger_joint", "right_outer_finger_joint"],
+                joint_names_expr=["left_outer_finger_joint", "right_outer_finger_joint"],
                 effort_limit_sim=40.0,
                 velocity_limit_sim=0.04,
                 stiffness=7500.0,

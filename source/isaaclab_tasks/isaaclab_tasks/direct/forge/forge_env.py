@@ -272,7 +272,7 @@ class ForgeEnv(FactoryEnv):
         super()._reset_idx(env_ids)
 
         print("Fingertip pos:", self.fingertip_midpoint_pos)
-        print("Joint limits:", self._robot.joint_limits)
+        # print("Joint limits:", self._robot.joint_limits)
 
 
         # Compute initial action for correct EMA computation.
