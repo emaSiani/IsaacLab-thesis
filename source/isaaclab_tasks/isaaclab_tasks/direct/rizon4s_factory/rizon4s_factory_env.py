@@ -126,20 +126,28 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
 
+        # Position is based on the 'flange' (self.fingertip_body_idx)
         self.fingertip_midpoint_pos = self._robot.data.body_pos_w[:, self.fingertip_body_idx] - self.scene.env_origins
         # print("Fingertip midpoint pos: ", self.fingertip_midpoint_pos)
         # print("X coordinate: ", self.fingertip_midpoint_pos[:, 0])
+        
         # Flange to tip offset translation
-        self.fingertip_midpoint_pos[:,0] += 0.33786 #  33.786 cm forward along x-axis
+        # NOTE: This offset needs to be correct for your robot.
+        self.fingertip_midpoint_pos[:,0] += -0.00339 #
+        self.fingertip_midpoint_pos[:,1] += 0.00088 #  
+        self.fingertip_midpoint_pos[:,2] -= 0.19806 #
+        
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]
         self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w[:, self.fingertip_body_idx]
         self.fingertip_midpoint_angvel = self._robot.data.body_ang_vel_w[:, self.fingertip_body_idx]
 
         jacobians = self._robot.root_physx_view.get_jacobians()
 
-        self.left_finger_jacobian = jacobians[:, self.left_finger_body_idx - 1, 0:6, 0:7]
-        self.right_finger_jacobian = jacobians[:, self.right_finger_body_idx - 1, 0:6, 0:7]
-        self.fingertip_midpoint_jacobian = (self.left_finger_jacobian + self.right_finger_jacobian) * 0.5
+        # ### THIS IS THE FIX ###
+        # The Jacobian MUST be calculated from the same body as the position (the 'flange').
+        # The old code (averaging fingertips) was creating an unstable controller.
+        self.fingertip_midpoint_jacobian = jacobians[:, self.fingertip_body_idx - 1, 0:6, 0:7]
+        
         self.arm_mass_matrix = self._robot.root_physx_view.get_generalized_mass_matrices()[:, 0:7, 0:7]
         self.joint_pos = self._robot.data.joint_pos.clone()
         self.joint_vel = self._robot.data.joint_vel.clone()
@@ -253,7 +261,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            ctrl_target_gripper_dof_pos=0.0,
+            ctrl_target_gripper_dof_pos=-0.1537,
         )
 
     def _apply_action(self):
@@ -304,7 +312,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            ctrl_target_gripper_dof_pos=0.0,
+            ctrl_target_gripper_dof_pos=-0.1537,
         )
 
     def generate_ctrl_signals(
@@ -329,9 +337,10 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             dead_zone_thresholds=self.dead_zone_thresholds,
         )
 
-        # set target for gripper joints to use physx's PD controller
-        self.ctrl_target_joint_pos[:, 7:9] = ctrl_target_gripper_dof_pos
-        self.joint_torque[:, 7:9] = 0.0
+        # ### FIX: set target for the ONE gripper joint (index 7) ###
+        self.ctrl_target_joint_pos[:, 7] = ctrl_target_gripper_dof_pos
+        # Clear torque on all 6 gripper joints (7-12)
+        self.joint_torque[:, 7:] = 0.0
 
         self._robot.set_joint_position_target(self.ctrl_target_joint_pos)
         self._robot.set_joint_effort_target(self.joint_torque)
@@ -593,11 +602,21 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
     def _set_rizon_to_default_pose(self, joints, env_ids):
         """Return Rizon to its default joint position."""
-        gripper_width = self.cfg_task.held_asset_cfg.diameter / 2 * 1.25
+        target_diameter_m = self.cfg_task.held_asset_cfg.diameter / 2 * 1.1
+        # 2. Convert this linear diameter (in meters) to radians
+        target_angle_rad = rizon4s_factory_utils.diameter_to_radians(
+            torch.tensor(target_diameter_m, device=self.device, dtype=torch.float32)
+        )
+        print(f"Setting target diameter: {target_diameter_m}m  ->  Target Angle: {target_angle_rad} rad")
+
+        # 3. Get the default joint positions
         joint_pos = self._robot.data.default_joint_pos[env_ids]
-        print("Set default joint pos: ", joint_pos)
-        joint_pos[:, 7:] = gripper_width  # MIMIC
+        
+        # 4. Set the 7 arm joints (indices 0-6)
         joint_pos[:, :7] = torch.tensor(joints, device=self.device)[None, :]
+        
+        # 5. ### FIX: Set ONLY the one actuated gripper joint (index 7) ###
+        joint_pos[:, 7] = target_angle_rad
         joint_vel = torch.zeros_like(joint_pos)
         joint_effort = torch.zeros_like(joint_pos)
         self.ctrl_target_joint_pos[env_ids, :] = joint_pos

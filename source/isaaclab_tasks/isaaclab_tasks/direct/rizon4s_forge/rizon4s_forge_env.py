@@ -22,24 +22,21 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
     def __init__(self, cfg: Rizon4sForgeEnvCfg, render_mode: str | None = None, **kwargs):
         """Initialize additional randomization and logging tensors."""
         super().__init__(cfg, render_mode, **kwargs)
+        
+        # ### FIX: Initialize prev_actions to prevent crash on first reset ###
+        self.prev_actions = torch.zeros_like(self.actions)
+        # ##################################################################
 
         # Success prediction.
         self.success_pred_scale = 0.0
         self.first_pred_success_tx = {}
         for thresh in [0.5, 0.6, 0.7, 0.8, 0.9]:
             self.first_pred_success_tx[thresh] = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-
-        # Flip quaternions.
         self.flip_quats = torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
-
-        # Force sensor information.
-         # In the Rizon 4s model, the 6DoF force/torque sensor is integrated in the flange
         print("Is flange in body names? ", "flange" in self._robot.body_names)
         self.force_sensor_body_idx = self._robot.body_names.index("flange")
         self.force_sensor_smooth = torch.zeros((self.num_envs, 6), device=self.device)
         self.force_sensor_world_smooth = torch.zeros((self.num_envs, 6), device=self.device)
-
-        # Set nominal dynamics parameters for randomization.
         self.default_gains = torch.tensor(self.cfg.ctrl.default_task_prop_gains, device=self.device).repeat(
             (self.num_envs, 1)
         )
@@ -52,7 +49,6 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         self.default_dead_zone = torch.tensor(self.cfg.ctrl.default_dead_zone, device=self.device).repeat(
             (self.num_envs, 1)
         )
-
         self.pos_threshold = self.default_pos_threshold.clone()
         self.rot_threshold = self.default_rot_threshold.clone()
 
@@ -223,7 +219,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            ctrl_target_gripper_dof_pos=0.0,
+            ctrl_target_gripper_dof_pos=-0.1537,
         )
 
     def _get_rewards(self):

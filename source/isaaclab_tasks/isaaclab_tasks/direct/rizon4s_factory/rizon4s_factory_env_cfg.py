@@ -58,6 +58,9 @@ class CtrlCfg:
 
     # Default joint position, task gains, and rot deriv scale used during reset.
     reset_joints = [0.0, -0.67, 0.4, 1.5708, 0.0, 0.698132, 0.0]
+
+    #reset_joints = [0.0, -0.342, 0.4, 1.5708, 0.0, 0.471, 0.677]
+    # reset_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
     default_task_prop_gains = [100, 100, 100, 30, 30, 30]
@@ -146,13 +149,19 @@ class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
                 "joint1": 0.0,
-                "joint2": -0.698132,
+                "joint2": 0.0,
                 "joint3": 0.0,
-                "joint4": 1.5708,
+                "joint4": 0.0,
                 "joint5": 0.0,
-                "joint6": 0.698132,
+                "joint6": 0.0,
                 "joint7": 0.0,
+                # 6 Gripper Joints
                 "finger_joint": 0.0,
+                "left_inner_knuckle_joint": 0.0,
+                "right_inner_knuckle_joint": 0.0,
+                "right_outer_knuckle_joint": 0.0,
+                "left_outer_finger_joint": 0.0,
+                "right_outer_finger_joint": 0.0,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
@@ -177,7 +186,7 @@ class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
                 velocity_limit_sim=149.5,
             ),
             "rizon_hand": ImplicitActuatorCfg(
-                joint_names_expr=["left_outer_finger_joint", "right_outer_finger_joint"],
+                joint_names_expr=["finger_joint", "left_inner_knuckle_joint"],
                 effort_limit_sim=40.0,
                 velocity_limit_sim=0.04,
                 stiffness=7500.0,

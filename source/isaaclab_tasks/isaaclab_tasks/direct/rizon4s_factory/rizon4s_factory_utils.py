@@ -112,3 +112,39 @@ def collapse_obs_dict(obs_dict, obs_order):
     obs_tensors = [obs_dict[obs_name] for obs_name in obs_order]
     obs_tensors = torch.cat(obs_tensors, dim=-1)
     return obs_tensors
+
+def diameter_to_radians(diameter_m, 
+                        min_angle_deg: float = -8.81,  # Lower limit in DEGREES
+                        max_angle_deg: float = 45.0,   # Upper limit in DEGREES
+                        min_diameter_m: float = 0.0,   # Fully closed diameter
+                        max_diameter_m: float = 0.1):  # Fully open diameter (100mm)
+    """
+    Maps a linear diameter (in meters) to the gripper's joint angle (in radians).
+    
+    Performs linear interpolation to the degree range [-8.81, 45.0]
+    and then converts the result to radians.
+    """
+    
+    # Ensure diameter_m is a tensor
+    if not isinstance(diameter_m, torch.Tensor):
+        # We need the device from somewhere if it's not a tensor already
+        # Assuming a default device or getting it from context might be needed
+        # For now, let's assume it's created on the default device if not a tensor
+        diameter_m = torch.tensor(diameter_m, dtype=torch.float32) 
+        # Note: If diameter_m is a scalar float, this needs device context.
+        # It's better to ensure diameter_m is already a tensor when passed in.
+
+    # 1. Normalize the diameter to a 0.0-1.0 range
+    percent_open = (diameter_m - min_diameter_m) / (max_diameter_m - min_diameter_m)
+    
+    # 2. Linearly interpolate onto the DEGREE range
+    joint_angle_deg = min_angle_deg + percent_open * (max_angle_deg - min_angle_deg)
+    
+    # 3. Clamp the degree value
+    clamped_angle_deg = torch.clamp(joint_angle_deg, min_angle_deg, max_angle_deg)
+    
+    # 4. Convert the final degree value to radians
+    # Use torch.deg2rad for tensor compatibility
+    clamped_angle_rad = torch.deg2rad(clamped_angle_deg)
+    
+    return clamped_angle_rad
