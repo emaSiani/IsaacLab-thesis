@@ -206,7 +206,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         return obs_dict, state_dict
 
     def _get_observations(self):
-        """Get actor/critic inputs using asymmetric critic."""
         obs_dict, state_dict = self._get_factory_obs_state_dict()
 
         obs_tensors = rizon4s_factory_utils.collapse_obs_dict(obs_dict, self.cfg.obs_order + ["prev_actions"])
@@ -508,7 +507,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         # Default robot pose.
         self._set_rizon_to_default_pose(joints=self.cfg.ctrl.reset_joints, env_ids=env_ids)
         self.step_sim_no_action()
-
         self.randomize_initial_state(env_ids)
 
     def _set_assets_to_default_pose(self, env_ids):
@@ -602,7 +600,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
     def _set_rizon_to_default_pose(self, joints, env_ids):
         """Return Rizon to its default joint position."""
-        target_diameter_m = self.cfg_task.held_asset_cfg.diameter / 2 * 1.1
+        target_diameter_m = self.cfg_task.held_asset_cfg.diameter * 1.25
         # 2. Convert this linear diameter (in meters) to radians
         target_angle_rad = rizon4s_factory_utils.diameter_to_radians(
             torch.tensor(target_diameter_m, device=self.device, dtype=torch.float32)
@@ -614,6 +612,12 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         
         # 4. Set the 7 arm joints (indices 0-6)
         joint_pos[:, :7] = torch.tensor(joints, device=self.device)[None, :]
+        # print the joint indices and names corresponding to the robot
+        joint_names = self._robot.joint_names
+        print("Robot Joint Indices and Names:")
+        for idx, name in enumerate(joint_names):
+            print(f"Index {idx}: {name}")
+
         
         # 5. ### FIX: Set ONLY the one actuated gripper joint (index 7) ###
         joint_pos[:, 7] = target_angle_rad

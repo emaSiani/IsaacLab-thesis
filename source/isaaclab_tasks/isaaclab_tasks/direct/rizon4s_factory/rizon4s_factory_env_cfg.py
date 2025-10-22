@@ -185,14 +185,17 @@ class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
                 effort_limit_sim=12,
                 velocity_limit_sim=149.5,
             ),
-            "rizon_hand": ImplicitActuatorCfg(
-                joint_names_expr=["finger_joint", "left_inner_knuckle_joint"],
-                effort_limit_sim=40.0,
-                velocity_limit_sim=0.04,
-                stiffness=7500.0,
-                damping=173.0,
-                friction=0.1,
-                armature=0.0,
+            "gripper": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    "finger_joint",
+                ],
+                velocity_limit_sim=2.0,
+                velocity_limit=2.0,
+                effort_limit_sim=200.0,
+                effort_limit=200.0,
+                stiffness=300.0,
+                damping=10.0,
+                friction=1.0,
             ),
         },
     )

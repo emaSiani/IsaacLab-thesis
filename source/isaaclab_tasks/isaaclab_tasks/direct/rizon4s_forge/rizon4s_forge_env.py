@@ -266,7 +266,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         """Perform additional randomizations."""
         super()._reset_idx(env_ids)
         print("Fingertip pos:", self.fingertip_midpoint_pos)
-        # print("Joint limits:", self._robot.joint_limits)
+        #print("Joint limits:", self._robot.joint_limits)
 
         # Compute initial action for correct EMA computation.
         fixed_pos_action_frame = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
