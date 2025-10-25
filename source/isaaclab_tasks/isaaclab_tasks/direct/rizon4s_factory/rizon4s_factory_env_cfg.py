@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+import numpy as np 
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
@@ -40,7 +41,9 @@ STATE_DIM_CFG = {
     "rot_threshold": 3,
 }
 
-
+GRIPPER_OPEN_ANGLE = 0.26
+print('Gripper open angle set to ', GRIPPER_OPEN_ANGLE)
+# print(f"Gripper open angle (rad): {GRIPPER_OPEN_ANGLE}")
 @configclass
 class ObsRandCfg:
     fixed_asset_pos = [0.001, 0.001, 0.001]
@@ -156,12 +159,12 @@ class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
                 "joint6": 0.0,
                 "joint7": 0.0,
                 # 6 Gripper Joints
-                "finger_joint": 0.0,
-                "left_inner_knuckle_joint": 0.0,
-                "right_inner_knuckle_joint": 0.0,
-                "right_outer_knuckle_joint": 0.0,
-                "left_outer_finger_joint": 0.0,
-                "right_outer_finger_joint": 0.0,
+                "finger_joint": GRIPPER_OPEN_ANGLE,
+                "left_inner_knuckle_joint": GRIPPER_OPEN_ANGLE,
+                "right_inner_knuckle_joint": GRIPPER_OPEN_ANGLE,
+                "right_outer_knuckle_joint": GRIPPER_OPEN_ANGLE,
+                "left_outer_finger_joint": -GRIPPER_OPEN_ANGLE,
+                "right_outer_finger_joint": -GRIPPER_OPEN_ANGLE,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),

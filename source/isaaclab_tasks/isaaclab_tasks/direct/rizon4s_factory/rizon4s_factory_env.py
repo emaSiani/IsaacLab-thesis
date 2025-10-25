@@ -133,9 +133,10 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         
         # Flange to tip offset translation
         # NOTE: This offset needs to be correct for your robot.
-        self.fingertip_midpoint_pos[:,0] += -0.00339 #
-        self.fingertip_midpoint_pos[:,1] += 0.00088 #  
+        # self.fingertip_midpoint_pos[:,0] += -0.00339 #
+        # self.fingertip_midpoint_pos[:,1] += 0.00088 #  
         self.fingertip_midpoint_pos[:,2] -= 0.19806 #
+    
         
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]
         self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w[:, self.fingertip_body_idx]
@@ -620,7 +621,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
         
         # 5. ### FIX: Set ONLY the one actuated gripper joint (index 7) ###
-        joint_pos[:, 7] = target_angle_rad
+        # joint_pos[:, 7] = target_angle_rad
         joint_vel = torch.zeros_like(joint_pos)
         joint_effort = torch.zeros_like(joint_pos)
         self.ctrl_target_joint_pos[env_ids, :] = joint_pos
