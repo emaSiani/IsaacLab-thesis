@@ -41,7 +41,7 @@ STATE_DIM_CFG = {
     "rot_threshold": 3,
 }
 
-GRIPPER_OPEN_ANGLE = 0.26
+GRIPPER_OPEN_ANGLE = 0.122173
 print('Gripper open angle set to ', GRIPPER_OPEN_ANGLE)
 # print(f"Gripper open angle (rad): {GRIPPER_OPEN_ANGLE}")
 @configclass
@@ -60,7 +60,8 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
 
     # Default joint position, task gains, and rot deriv scale used during reset.
-    reset_joints = [0.0, -0.67, 0.4, 1.5708, 0.0, 0.698132, 0.0]
+    # reset_joints = [-0.1, -0.42, 0.4, 1.96, -0.317, 0.5986, 0.0]
+    reset_joints = [-0.13, -0.5707, 0.422, 1.7854, -0.317, 0.705, 0.0]
 
     #reset_joints = [0.0, -0.342, 0.4, 1.5708, 0.0, 0.471, 0.677]
     # reset_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

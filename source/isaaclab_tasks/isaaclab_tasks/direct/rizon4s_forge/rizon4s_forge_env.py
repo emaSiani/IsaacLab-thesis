@@ -220,7 +220,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
             # ctrl_target_gripper_dof_pos=-0.1537,
-            ctrl_target_gripper_dof_pos=0.13,
+            ctrl_target_gripper_dof_pos=0.0,
         )
 
     def _get_rewards(self):

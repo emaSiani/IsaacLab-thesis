@@ -125,6 +125,15 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
+        # - 90 degree rotation around Y to align with gripper
+        rot_correction = torch_utils.quat_from_euler_xyz(
+            roll=torch.tensor(0.0, device=self.device, dtype=torch.float32),
+            pitch=torch.tensor(-1.5708, device=self.device, dtype=torch.float32),
+            yaw=torch.tensor(0.0, device=self.device, dtype=torch.float32),
+        )
+        # expand rot_correction to match env size
+        rot_correction = rot_correction.unsqueeze(0).repeat(self.num_envs, 1)
+        self.held_quat = torch_utils.quat_mul(rot_correction, self.held_quat)
 
         # Position is based on the 'flange' (self.fingertip_body_idx)
         self.fingertip_midpoint_pos = self._robot.data.body_pos_w[:, self.fingertip_body_idx] - self.scene.env_origins
@@ -133,9 +142,9 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         
         # Flange to tip offset translation
         # NOTE: This offset needs to be correct for your robot.
-        # self.fingertip_midpoint_pos[:,0] += -0.00339 #
-        # self.fingertip_midpoint_pos[:,1] += 0.00088 #  
-        self.fingertip_midpoint_pos[:,2] -= 0.19806 #
+        self.fingertip_midpoint_pos[:,0] -= 0.0003 #
+        #self.fingertip_midpoint_pos[:,1] += 0.03 #  
+        self.fingertip_midpoint_pos[:,2] -= 0.19913 #
     
         
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]
@@ -261,7 +270,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            ctrl_target_gripper_dof_pos=-0.1537,
+            ctrl_target_gripper_dof_pos=0.123918,
         )
 
     def _apply_action(self):
@@ -506,6 +515,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         print("Resetting envs: ", env_ids)
         self._set_assets_to_default_pose(env_ids)
         # Default robot pose.
+        print(f'Setting envs {env_ids} to default robot pose.')
         self._set_rizon_to_default_pose(joints=self.cfg.ctrl.reset_joints, env_ids=env_ids)
         self.step_sim_no_action()
         self.randomize_initial_state(env_ids)
@@ -601,12 +611,12 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
     def _set_rizon_to_default_pose(self, joints, env_ids):
         """Return Rizon to its default joint position."""
-        target_diameter_m = self.cfg_task.held_asset_cfg.diameter * 1.25
-        # 2. Convert this linear diameter (in meters) to radians
-        target_angle_rad = rizon4s_factory_utils.diameter_to_radians(
-            torch.tensor(target_diameter_m, device=self.device, dtype=torch.float32)
-        )
-        print(f"Setting target diameter: {target_diameter_m}m  ->  Target Angle: {target_angle_rad} rad")
+        # target_diameter_m = self.cfg_task.held_asset_cfg.diameter * 1.25
+        # # 2. Convert this linear diameter (in meters) to radians
+        # target_angle_rad = rizon4s_factory_utils.diameter_to_radians(
+        #     torch.tensor(target_diameter_m, device=self.device, dtype=torch.float32)
+        # )
+        # print(f"Setting target diameter: {target_diameter_m}m  ->  Target Angle: {target_angle_rad} rad")
 
         # 3. Get the default joint positions
         joint_pos = self._robot.data.default_joint_pos[env_ids]
@@ -706,52 +716,54 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         ik_attempt = 0
 
         hand_down_quat = torch.zeros((self.num_envs, 4), dtype=torch.float32, device=self.device)
-        # while True:
-        #     n_bad = bad_envs.shape[0]
+        print("Starting IK for envs: ", bad_envs)
+        while True:
+            n_bad = bad_envs.shape[0]
+            print(f' n bad envs: {n_bad}')
 
-        #     above_fixed_pos = fixed_tip_pos.clone()
-        #     above_fixed_pos[:, 2] += self.cfg_task.hand_init_pos[2]
+            above_fixed_pos = fixed_tip_pos.clone()
+            above_fixed_pos[:, 2] += self.cfg_task.hand_init_pos[2]
 
-        #     rand_sample = torch.rand((n_bad, 3), dtype=torch.float32, device=self.device)
-        #     above_fixed_pos_rand = 2 * (rand_sample - 0.5)  # [-1, 1]
-        #     hand_init_pos_rand = torch.tensor(self.cfg_task.hand_init_pos_noise, device=self.device)
-        #     above_fixed_pos_rand = above_fixed_pos_rand @ torch.diag(hand_init_pos_rand)
-        #     above_fixed_pos[bad_envs] += above_fixed_pos_rand
+            rand_sample = torch.rand((n_bad, 3), dtype=torch.float32, device=self.device)
+            above_fixed_pos_rand = 2 * (rand_sample - 0.5)  # [-1, 1]
+            hand_init_pos_rand = torch.tensor(self.cfg_task.hand_init_pos_noise, device=self.device)
+            above_fixed_pos_rand = above_fixed_pos_rand @ torch.diag(hand_init_pos_rand)
+            above_fixed_pos[bad_envs] += above_fixed_pos_rand
 
-        #     # (b) get random orientation facing down
-        #     hand_down_euler = (
-        #         torch.tensor(self.cfg_task.hand_init_orn, device=self.device).unsqueeze(0).repeat(n_bad, 1)
-        #     )
+            # (b) get random orientation facing down
+            hand_down_euler = (
+                torch.tensor(self.cfg_task.hand_init_orn, device=self.device).unsqueeze(0).repeat(n_bad, 1)
+            )
 
-        #     rand_sample = torch.rand((n_bad, 3), dtype=torch.float32, device=self.device)
-        #     above_fixed_orn_noise = 2 * (rand_sample - 0.5)  # [-1, 1]
-        #     hand_init_orn_rand = torch.tensor(self.cfg_task.hand_init_orn_noise, device=self.device)
-        #     above_fixed_orn_noise = above_fixed_orn_noise @ torch.diag(hand_init_orn_rand)
-        #     hand_down_euler += above_fixed_orn_noise
-        #     hand_down_quat[bad_envs, :] = torch_utils.quat_from_euler_xyz(
-        #         roll=hand_down_euler[:, 0], pitch=hand_down_euler[:, 1], yaw=hand_down_euler[:, 2]
-        #     )
+            rand_sample = torch.rand((n_bad, 3), dtype=torch.float32, device=self.device)
+            above_fixed_orn_noise = 2 * (rand_sample - 0.5)  # [-1, 1]
+            hand_init_orn_rand = torch.tensor(self.cfg_task.hand_init_orn_noise, device=self.device)
+            above_fixed_orn_noise = above_fixed_orn_noise @ torch.diag(hand_init_orn_rand)
+            hand_down_euler += above_fixed_orn_noise
+            hand_down_quat[bad_envs, :] = torch_utils.quat_from_euler_xyz(
+                roll=hand_down_euler[:, 0], pitch=hand_down_euler[:, 1], yaw=hand_down_euler[:, 2]
+            )
 
-        #     # (c) iterative IK Method
-        #     pos_error, aa_error = self.set_pos_inverse_kinematics(
-        #         ctrl_target_fingertip_midpoint_pos=above_fixed_pos,
-        #         ctrl_target_fingertip_midpoint_quat=hand_down_quat,
-        #         env_ids=bad_envs,
-        #     )
-        #     pos_error = torch.linalg.norm(pos_error, dim=1) > 1e-3
-        #     angle_error = torch.norm(aa_error, dim=1) > 1e-3
-        #     any_error = torch.logical_or(pos_error, angle_error)
-        #     bad_envs = bad_envs[any_error.nonzero(as_tuple=False).squeeze(-1)]
+            # (c) iterative IK Method
+            pos_error, aa_error = self.set_pos_inverse_kinematics(
+                ctrl_target_fingertip_midpoint_pos=above_fixed_pos,
+                ctrl_target_fingertip_midpoint_quat=hand_down_quat,
+                env_ids=bad_envs,
+            )
+            pos_error = torch.linalg.norm(pos_error, dim=1) > 1e-3
+            angle_error = torch.norm(aa_error, dim=1) > 1e-3
+            any_error = torch.logical_or(pos_error, angle_error)
+            bad_envs = bad_envs[any_error.nonzero(as_tuple=False).squeeze(-1)]
 
-        #     # Check IK succeeded for all envs, otherwise try again for those envs
-        #     if bad_envs.shape[0] == 0:
-        #         break
+            # Check IK succeeded for all envs, otherwise try again for those envs
+            if bad_envs.shape[0] == 0:
+                print("IK succeeded for all envs.")
+                break
 
-        #     self._set_franka_to_default_pose(
-        #         joints=[0.00871, -0.10368, -0.00794, -1.49139, -0.00083, 1.38774, 0.0], env_ids=bad_envs
-        #     )
+            self._set_rizon_to_default_pose(joints=self.cfg.ctrl.reset_joints, env_ids=bad_envs)
 
-        #     ik_attempt += 1
+            ik_attempt += 1
+            print(f"IK attempt {ik_attempt} failed for {bad_envs.shape[0]} envs.")
 
         self.step_sim_no_action()
 
