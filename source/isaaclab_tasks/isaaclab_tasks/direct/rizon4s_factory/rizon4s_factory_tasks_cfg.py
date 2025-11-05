@@ -190,7 +190,7 @@ class GearBase(FixedAssetCfg):
     height = 0.02
     base_height = 0.005
     small_gear_base_offset = [5.075e-2, 0.0, 0.0]
-    medium_gear_base_offset = [2.025e-2, 0.0, 0.0]
+    medium_gear_base_offset = [1.8e-2, 0.0, 0.0]
     large_gear_base_offset = [-3.025e-2, 0.0, 0.0]
 
 

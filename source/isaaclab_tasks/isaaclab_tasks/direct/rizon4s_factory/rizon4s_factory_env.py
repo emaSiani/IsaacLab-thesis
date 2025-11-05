@@ -34,25 +34,29 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
-       # --- INIZIO CODICE DEBUG (v7) ---
+       # --- INIZIO CODICE DEBUG (v8 - Orientamento) ---
         
-        # 1. Definiamo i prototipi per il GOAL (rosso) e il GEAR (verde)
-        #    con il raggio corretto (5mm).
-        goal_prototype = sim_utils.SphereCfg(
-            radius=0.005,  # 5mm
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)) # Rosso
+        # 1. Definiamo i prototipi
+        #    Usiamo "frame_prim.usd" che è un set di assi R-G-B (X-Y-Z)
+        #    Lo scaleremo per renderlo visibile (es. 5 cm)
+        frame_scale = (0.05, 0.05, 0.05) 
+        
+        goal_prototype = sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+            scale=frame_scale
         )
-        held_prototype = sim_utils.SphereCfg(
-            radius=0.005,  # 5mm
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)) # Verde
+        
+        held_prototype = sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+            scale=frame_scale
         )
 
         # 2. Crea UNA SOLA Config con entrambi i prototipi
         self.debug_marker_cfg = VisualizationMarkersCfg(
             prim_path="/World/Debug/TaskMarkers",
             markers={
-                "goal": goal_prototype, # Indice 0 del dizionario
-                "held": held_prototype  # Indice 1 del dizionario
+                "goal_frame": goal_prototype, # Indice 0
+                "held_frame": held_prototype  # Indice 1
             }
         )
         
@@ -60,13 +64,12 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.debug_markers = VisualizationMarkers(cfg=self.debug_marker_cfg)
 
         # 4. Pre-calcola gli indici dei marker
-        #    Creiamo un array che dice "mostra N marker 'goal', seguiti da N marker 'held'"
-        #    Gli indici 0 e 1 si riferiscono all'ordine dei prototipi nel dizionario 'markers'
+        #    Indice 0 = "goal_frame", Indice 1 = "held_frame"
         goal_indices = torch.full((self.num_envs,), 0, dtype=torch.int32, device=self.device)
         held_indices = torch.full((self.num_envs,), 1, dtype=torch.int32, device=self.device)
         self.all_marker_indices = torch.cat([goal_indices, held_indices], dim=0)
         
-        # --- FINE CODICE DEBUG (v7) ---
+        # --- FINE CODICE DEBUG (v8 - Orientamento) ---
         rizon4s_factory_utils.set_body_inertias(self._robot, self.scene.num_envs)
         self._init_tensors()
         self._set_default_dynamics_parameters()
@@ -171,7 +174,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         
         # Flange to tip offset translation
         # NOTE: This offset needs to be correct for your robot.
-        self.fingertip_midpoint_pos[:,0] -= 0.0003 #
+        # self.fingertip_midpoint_pos[:,0] -= 0.0003 #
         #self.fingertip_midpoint_pos[:,1] += 0.03 #  
         self.fingertip_midpoint_pos[:,2] -= 0.19913 #
     
@@ -491,23 +494,23 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             self.device,
         )
 
-        # --- INIZIO CODICE DEBUG (v8) ---
+        # --- INIZIO CODICE DEBUG (v8 - Orientamento) ---
         
-        # 1. Concatena TUTTE le posizioni in un unico array
+        # 1. Concatena TUTTE le posizioni in coordinate globali
         all_marker_locations_local = torch.cat([target_held_base_pos, held_base_pos], dim=0)
-
-        # 2. <<< LA SOLUZIONE (Aggiungi questa riga) >>>
-        # Aggiungi gli offset di origine dell'ambiente per convertire da coordinate locali a globali
         all_marker_locations_world = all_marker_locations_local + self.scene.env_origins.repeat(2, 1)
 
+        # 2. Concatena TUTTI gli orientamenti
+        all_marker_orientations = torch.cat([target_held_base_quat, held_base_quat], dim=0)
+
         # 3. Visualizza tutto in una sola chiamata
-        #    Usa le coordinate globali (world)
         self.debug_markers.visualize(
-            translations=all_marker_locations_world, # <-- Usa la variabile "_world"
+            translations=all_marker_locations_world,
+            orientations=all_marker_orientations,  # <-- Aggiungi questo
             marker_indices=self.all_marker_indices
         )
         
-        # --- FINE CODICE DEBUG (v8) ---
+        # --- FINE CODICE DEBUG (v8 - Orientamento) ---
 
         keypoints_held = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         keypoints_fixed = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
@@ -527,7 +530,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
                 keypoint_offset.repeat(self.num_envs, 1),
             )[1]
         keypoint_dist = torch.norm(keypoints_held - keypoints_fixed, p=2, dim=-1).mean(-1)
-        print("Keypoint dist: ", keypoint_dist[0])
 
         a0, b0 = self.cfg_task.keypoint_coef_baseline
         a1, b1 = self.cfg_task.keypoint_coef_coarse
