@@ -8,7 +8,8 @@ import torch
 
 import carb
 import isaacsim.core.utils.torch as torch_utils
-
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+import isaaclab.sim as sim_utils  # <-- Aggiungi questo import
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
@@ -33,6 +34,39 @@ class Rizon4sFactoryEnv(DirectRLEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
+       # --- INIZIO CODICE DEBUG (v7) ---
+        
+        # 1. Definiamo i prototipi per il GOAL (rosso) e il GEAR (verde)
+        #    con il raggio corretto (5mm).
+        goal_prototype = sim_utils.SphereCfg(
+            radius=0.005,  # 5mm
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)) # Rosso
+        )
+        held_prototype = sim_utils.SphereCfg(
+            radius=0.005,  # 5mm
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)) # Verde
+        )
+
+        # 2. Crea UNA SOLA Config con entrambi i prototipi
+        self.debug_marker_cfg = VisualizationMarkersCfg(
+            prim_path="/World/Debug/TaskMarkers",
+            markers={
+                "goal": goal_prototype, # Indice 0 del dizionario
+                "held": held_prototype  # Indice 1 del dizionario
+            }
+        )
+        
+        # 3. Crea UN SOLO Oggetto Marker
+        self.debug_markers = VisualizationMarkers(cfg=self.debug_marker_cfg)
+
+        # 4. Pre-calcola gli indici dei marker
+        #    Creiamo un array che dice "mostra N marker 'goal', seguiti da N marker 'held'"
+        #    Gli indici 0 e 1 si riferiscono all'ordine dei prototipi nel dizionario 'markers'
+        goal_indices = torch.full((self.num_envs,), 0, dtype=torch.int32, device=self.device)
+        held_indices = torch.full((self.num_envs,), 1, dtype=torch.int32, device=self.device)
+        self.all_marker_indices = torch.cat([goal_indices, held_indices], dim=0)
+        
+        # --- FINE CODICE DEBUG (v7) ---
         rizon4s_factory_utils.set_body_inertias(self._robot, self.scene.num_envs)
         self._init_tensors()
         self._set_default_dynamics_parameters()
@@ -126,13 +160,8 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
         # - 90 degree rotation around Y to align with gripper
-        rot_correction = torch_utils.quat_from_euler_xyz(
-            roll=torch.tensor(0.0, device=self.device, dtype=torch.float32),
-            pitch=torch.tensor(-1.5708, device=self.device, dtype=torch.float32),
-            yaw=torch.tensor(0.0, device=self.device, dtype=torch.float32),
-        )
+        rot_correction = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         # expand rot_correction to match env size
-        rot_correction = rot_correction.unsqueeze(0).repeat(self.num_envs, 1)
         self.held_quat = torch_utils.quat_mul(rot_correction, self.held_quat)
 
         # Position is based on the 'flange' (self.fingertip_body_idx)
@@ -462,6 +491,24 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             self.device,
         )
 
+        # --- INIZIO CODICE DEBUG (v8) ---
+        
+        # 1. Concatena TUTTE le posizioni in un unico array
+        all_marker_locations_local = torch.cat([target_held_base_pos, held_base_pos], dim=0)
+
+        # 2. <<< LA SOLUZIONE (Aggiungi questa riga) >>>
+        # Aggiungi gli offset di origine dell'ambiente per convertire da coordinate locali a globali
+        all_marker_locations_world = all_marker_locations_local + self.scene.env_origins.repeat(2, 1)
+
+        # 3. Visualizza tutto in una sola chiamata
+        #    Usa le coordinate globali (world)
+        self.debug_markers.visualize(
+            translations=all_marker_locations_world, # <-- Usa la variabile "_world"
+            marker_indices=self.all_marker_indices
+        )
+        
+        # --- FINE CODICE DEBUG (v8) ---
+
         keypoints_held = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         keypoints_fixed = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         offsets = rizon4s_factory_utils.get_keypoint_offsets(self.cfg_task.num_keypoints, self.device)
@@ -480,6 +527,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
                 keypoint_offset.repeat(self.num_envs, 1),
             )[1]
         keypoint_dist = torch.norm(keypoints_held - keypoints_fixed, p=2, dim=-1).mean(-1)
+        print("Keypoint dist: ", keypoint_dist[0])
 
         a0, b0 = self.cfg_task.keypoint_coef_baseline
         a1, b1 = self.cfg_task.keypoint_coef_coarse
@@ -586,7 +634,8 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             gear_base_offset = self.cfg_task.fixed_asset_cfg.medium_gear_base_offset
             held_asset_relative_pos[:, 0] += gear_base_offset[0]
             held_asset_relative_pos[:, 2] += gear_base_offset[2]
-            held_asset_relative_pos[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0 * 1.1
+            held_asset_relative_pos[:, 2] += (self.cfg_task.held_asset_cfg.height / 2.0 * 1.1)
+            print("Gear held asset relative pos: ", held_asset_relative_pos[0])
         elif self.cfg_task.name == "nut_thread":
             held_asset_relative_pos = rizon4s_factory_utils.get_held_base_pos_local(
                 self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device

@@ -10,6 +10,8 @@ import carb
 import isaacsim.core.utils.torch as torch_utils
 
 import isaaclab.sim as sim_utils
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+import isaaclab.sim as sim_utils  # <-- Aggiungi questo import
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
@@ -32,6 +34,40 @@ class FactoryEnv(DirectRLEnv):
         self.cfg_task = cfg.task
 
         super().__init__(cfg, render_mode, **kwargs)
+
+        # --- INIZIO CODICE DEBUG (v7) ---
+        
+        # 1. Definiamo i prototipi per il GOAL (rosso) e il GEAR (verde)
+        #    con il raggio corretto (5mm).
+        goal_prototype = sim_utils.SphereCfg(
+            radius=0.005,  # 5mm
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)) # Rosso
+        )
+        held_prototype = sim_utils.SphereCfg(
+            radius=0.005,  # 5mm
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)) # Verde
+        )
+
+        # 2. Crea UNA SOLA Config con entrambi i prototipi
+        self.debug_marker_cfg = VisualizationMarkersCfg(
+            prim_path="/World/Debug/TaskMarkers",
+            markers={
+                "goal": goal_prototype, # Indice 0 del dizionario
+                "held": held_prototype  # Indice 1 del dizionario
+            }
+        )
+        
+        # 3. Crea UN SOLO Oggetto Marker
+        self.debug_markers = VisualizationMarkers(cfg=self.debug_marker_cfg)
+
+        # 4. Pre-calcola gli indici dei marker
+        #    Creiamo un array che dice "mostra N marker 'goal', seguiti da N marker 'held'"
+        #    Gli indici 0 e 1 si riferiscono all'ordine dei prototipi nel dizionario 'markers'
+        goal_indices = torch.full((self.num_envs,), 0, dtype=torch.int32, device=self.device)
+        held_indices = torch.full((self.num_envs,), 1, dtype=torch.int32, device=self.device)
+        self.all_marker_indices = torch.cat([goal_indices, held_indices], dim=0)
+        
+        # --- FINE CODICE DEBUG (v7) ---
 
         factory_utils.set_body_inertias(self._robot, self.scene.num_envs)
         self._init_tensors()
@@ -438,6 +474,24 @@ class FactoryEnv(DirectRLEnv):
             self.device,
         )
 
+        # --- INIZIO CODICE DEBUG (v8) ---
+        
+        # 1. Concatena TUTTE le posizioni in un unico array
+        all_marker_locations_local = torch.cat([target_held_base_pos, held_base_pos], dim=0)
+
+        # 2. <<< LA SOLUZIONE (Aggiungi questa riga) >>>
+        # Aggiungi gli offset di origine dell'ambiente per convertire da coordinate locali a globali
+        all_marker_locations_world = all_marker_locations_local + self.scene.env_origins.repeat(2, 1)
+
+        # 3. Visualizza tutto in una sola chiamata
+        #    Usa le coordinate globali (world)
+        self.debug_markers.visualize(
+            translations=all_marker_locations_world, # <-- Usa la variabile "_world"
+            marker_indices=self.all_marker_indices
+        )
+        
+        # --- FINE CODICE DEBUG (v8) ---
+
         keypoints_held = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         keypoints_fixed = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         offsets = factory_utils.get_keypoint_offsets(self.cfg_task.num_keypoints, self.device)
@@ -456,6 +510,8 @@ class FactoryEnv(DirectRLEnv):
                 keypoint_offset.repeat(self.num_envs, 1),
             )[1]
         keypoint_dist = torch.norm(keypoints_held - keypoints_fixed, p=2, dim=-1).mean(-1)
+        print("Keypoint dist: ", keypoint_dist[0])
+
 
         a0, b0 = self.cfg_task.keypoint_coef_baseline
         a1, b1 = self.cfg_task.keypoint_coef_coarse
