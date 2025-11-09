@@ -190,7 +190,7 @@ class GearBase(FixedAssetCfg):
     height = 0.02
     base_height = 0.005
     small_gear_base_offset = [5.075e-2, 0.0, 0.0]
-    medium_gear_base_offset = [1.8e-2, 0.0, 0.0]
+    medium_gear_base_offset = [2.025e-2, 0.0, 0.0]
     large_gear_base_offset = [-3.025e-2, 0.0, 0.0]
 
 
@@ -273,6 +273,8 @@ class GearMesh(Rizon4sFactoryTask):
     hand_init_pos_noise: list = [0.02, 0.02, 0.01]
     hand_init_orn: list = [3.1416, 0, 0.0]
     hand_init_orn_noise: list = [0.0, 0.0, 0.785]
+    #hand_init_orn_noise: list = [0.0, 0.0, 0.390]
+
 
     # Fixed Asset (applies to all tasks)
     fixed_asset_init_pos_noise: list = [0.05, 0.05, 0.05]
