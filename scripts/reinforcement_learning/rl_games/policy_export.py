@@ -1,139 +1,138 @@
 import os
 import torch
+import yaml
 from rl_games.common.player import BasePlayer
-from typing import Dict, Any
 
-# Classe wrapper per l'esportazione: combina i layer di policy
-# Assumiamo che la policy sia la catena actor_mlp -> mu
-class ActorMLP(torch.nn.Module):
+class DeployWrapper(torch.nn.Module):
     """
-    Modulo PyTorch che incapsula la parte Attore (MLP e layer mu) della rete RL-Games.
-    Questo e' necessario per esportare il forward pass della policy separato 
-    dalle componenti critico e RNN.
+    Wraps the full RL-Games network to make it deploy-ready via JIT.
+    Handles:
+    1. Input Dictionary creation (so JIT accepts raw tensors).
+    2. Full forward pass (Input Norm -> LSTM -> MLP).
+    3. Output parsing (handles both Dict and Tuple returns).
     """
-    def __init__(self, actor_mlp, mu_layer):
+    def __init__(self, network):
         super().__init__()
-        self.actor_mlp = actor_mlp
-        self.mu_layer = mu_layer
-        
-    def forward(self, x):
-        # x e' l'input all'MLP (lo stato latente di 1024 nel tuo caso RNN)
-        features = self.actor_mlp(x)
-        action_mean = self.mu_layer(features)
-        return action_mean
+        self.network = network
 
+    def forward(self, obs, rnn_states):
+        """
+        Args:
+            obs: Raw observations [Batch, Num_Obs]
+            rnn_states: Tuple of hidden states for LSTM
+        Returns:
+            action: Deterministic action
+            new_rnn_states: Updated hidden states
+        """
+        # Construct the input dict expected by rl_games A2CNetwork
+        input_dict = {
+            'is_train': False,
+            'prev_actions': None,
+            'obs': obs,
+            'rnn_states': rnn_states
+        }
+        
+        # Forward pass through the ENTIRE network
+        result = self.network(input_dict)
+        
+        # --- ROBUST OUTPUT HANDLING ---
+        # Check if result is a Dictionary (standard) or Tuple (some versions)
+        if isinstance(result, dict):
+            return result['mus'], result['rnn_states']
+        
+        # If it's a tuple, usually the format is: (mus, value, states) or (mus, states)
+        # Index 0 is always the Action Mean (mus)
+        # Index -1 is always the RNN States
+        return result[0], result[-1]
+
+def get_num_observations(agent):
+    """Robustly detects observation size from various wrapper types."""
+    # 1. Try direct attribute (RSL-RL style)
+    if hasattr(agent, 'env') and hasattr(agent.env, 'num_observations'):
+        return agent.env.num_observations
+    
+    # 2. Try observation_space on env (Gym/IsaacLab style)
+    if hasattr(agent, 'env') and hasattr(agent.env, 'observation_space'):
+        if hasattr(agent.env.observation_space, 'shape'):
+            return agent.env.observation_space.shape[0]
+            
+    # 3. Try observation_space on agent (RL-Games BasePlayer)
+    if hasattr(agent, 'observation_space') and hasattr(agent.observation_space, 'shape'):
+        return agent.observation_space.shape[0]
+
+    # 4. Fallback: Inspect the normalization layer if present
+    if hasattr(agent.model, 'a2c_network') and hasattr(agent.model.a2c_network, 'running_mean_std'):
+        return agent.model.a2c_network.running_mean_std.running_mean.shape[0]
+
+    raise AttributeError("Could not detect 'num_observations' from agent or environment.")
 
 def export_rl_games_policy(agent: BasePlayer, log_dir: str, task_name: str, rl_device: str):
     """
-    Esporta la policy (policy_model) da un agente RL-Games in formato ONNX e TorchScript JIT (.jit/.pt).
-    
-    ATTENZIONE: Questa funzione assume che la policy sia una rete ricorrente (RNN)
-    e che l'input al policy_model sia lo stato latente dell'RNN (dimensione 1024).
-
-    Args:
-        agent: L'agente BasePlayer di RL-Games caricato.
-        log_dir: La directory radice dove salvare l'esportazione.
-        task_name: Il nome del task per nominare i file.
-        rl_device: Il dispositivo (es. 'cuda:0') su cui risiede il modello.
+    Exports the RL-Games policy to TorchScript (JIT) and saves a config YAML.
+    Ensures the network is returned to the original device after export.
     """
+    network = agent.model.a2c_network
+    
     try:
-        # Mettere il modello in modalita' inferenza
-        agent.model.a2c_network.eval()
+        print(f"\n[EXPORT] Starting Policy Export for {task_name}...")
         
-        # Estrarre i layer della policy
-        actor_mlp = agent.model.a2c_network.actor_mlp
-        mu_layer = agent.model.a2c_network.mu
-        
-        policy_model = ActorMLP(actor_mlp, mu_layer)
+        # 1. Move Network to CPU for Export (Standard practice for JIT portability)
+        network.eval()
+        network.cpu() 
 
-        # Creare un Input Fittizio Corretto (dimensione 1024 per l'actor_mlp)
-        # 1024 e' la dimensione di input per actor_mlp come visto dalla tua configurazione
-        INPUT_SIZE_RNN_FEATURES = 1024
-        dummy_input = torch.randn(
-            (1, INPUT_SIZE_RNN_FEATURES),  # [Batch_size=1, Dimensione Feature RNN]
-            device=rl_device
-        )
+        # 2. Detect Observation Size
+        num_obs = get_num_observations(agent)
+        print(f"[EXPORT] Detected Num Observations: {num_obs}")
+
+        # 3. Prepare Dummy Inputs (Batch Size = 1)
+        dummy_obs = torch.randn((1, num_obs), device="cpu")
+        
+        # 4. Prepare Dummy RNN States
+        # Manual creation based on config (LSTM, 2 layers, 1024 units)
+        # This prevents "TypeError" issues with get_default_rnn_state
+        print("[EXPORT] Creating dummy RNN states (Layers=2, Units=1024)...")
+        
+        # LSTM needs hidden (h) and cell (c) states
+        # Shape: (num_layers, batch_size, hidden_size)
+        h = torch.zeros((2, 1, 1024), device="cpu")
+        c = torch.zeros((2, 1, 1024), device="cpu")
+        dummy_states = (h, c)
+
+        # 5. Wrap and Trace
+        deploy_model = DeployWrapper(network)
         
         export_dir = os.path.join(log_dir, "exported_policy")
         os.makedirs(export_dir, exist_ok=True)
-        
-        print("\n" + "="*50)
-        print("INIZIO ESPORTAZIONE POLICY RL-GAMES (RNN)")
-        print(f"Directory di output: {export_dir}")
-        print(f"ATTENZIONE: Policy esportata richiede input di dimensione {INPUT_SIZE_RNN_FEATURES}.")
-        print("="*50)
-        
-        # 1. Esportazione in formato TorchScript (.pt / .jit)
-        # rsl_rl usa .pt, rl_games .jit, ma sono entrambi TorchScript
         jit_path = os.path.join(export_dir, f"{task_name}_policy.pt")
-        print(f"[INFO] Esportazione TorchScript (.pt): {jit_path}")
-        traced_script_module = torch.jit.trace(policy_model, dummy_input)
-        traced_script_module.save(jit_path)
 
-        # 2. Esportazione in formato ONNX
-        onnx_path = os.path.join(export_dir, f"{task_name}_policy.onnx")
-        print(f"[INFO] Esportazione ONNX (.onnx): {onnx_path}")
-        torch.onnx.export(
-            policy_model,
-            dummy_input,
-            onnx_path,
-            export_params=True,
-            opset_version=17,
-            do_constant_folding=True,
-            input_names=["rnn_features"],
-            output_names=["action_mean"],
-            dynamic_axes={"rnn_features": {0: "batch_size"}, "action_mean": {0: "batch_size"}},
-        )
-        
-        print("[INFO] Esportazione policy completata con successo.")
-        
-    except AttributeError as e:
-        print(f"\n[ERRORE ESPORTAZIONE] Impossibile trovare i layer di policy (actor_mlp o mu): {e}")
-        print("Skipping policy export.")
-    except Exception as e:
-        print(f"\n[ERRORE GENERICO ESPORTAZIONE] Si e' verificato un errore durante l'esportazione: {e}")
-        print("Skipping policy export.")
+        print("[EXPORT] Tracing model...")
+        # We pass a tuple of arguments to trace
+        traced_module = torch.jit.trace(deploy_model, (dummy_obs, dummy_states))
+        traced_module.save(jit_path)
 
+        print(f"[EXPORT] SUCCESS! Policy saved to: {jit_path}")
+        print(f"[EXPORT] Model input signature: obs({num_obs}), rnn_states(LSTM Tuple)")
 
-def export_environment_config(env_cfg: Dict[str, Any], log_dir: str, task_name: str):
-    """
-    Esporta la configurazione essenziale dell'ambiente in un file YAML.
-    Questo simula l'esportazione dell'environment usata in rsl_rl.
-
-    Args:
-        env_cfg: La configurazione dell'ambiente (oggetto ManagerBasedRLEnvCfg, etc.).
-        log_dir: La directory radice dove salvare l'esportazione.
-        task_name: Il nome del task per nominare il file.
-    """
-    import yaml
-    from isaaclab.envs import DirectRLEnvCfg
-
-    export_dir = os.path.join(log_dir, "exported_policy")
-    os.makedirs(export_dir, exist_ok=True)
-    yaml_path = os.path.join(export_dir, f"{task_name}_env_config.yaml")
-
-    # Estraiamo i dati essenziali: osservazioni, azioni e dt
-    if isinstance(env_cfg, DirectRLEnvCfg):
+        # 6. Export Simple Config
+        env_cfg_path = os.path.join(export_dir, f"{task_name}_env_config.yaml")
         env_data = {
-            "num_observations": env_cfg.num_observations,
-            "num_actions": env_cfg.num_actions,
-            "dt": env_cfg.sim.dt,
-            "clip_actions": True, # Assumiamo clipping delle azioni per coerenza
-            # Aggiungi qui altri parametri rilevanti se necessari
+            "dt": 0.0166, # Default 60Hz
+            "decimation": 2, 
+            "num_observations": num_obs,
+            "num_rnn_layers": 2,   
+            "rnn_units": 1024      
         }
-    else:
-        # Per altri tipi di env (MARL o ManagerBased), potresti dover accedere diversamente
-        # Usiamo l'approccio generico se disponibile o passiamo oltre
-        env_data = {
-            "num_observations": "N/A (Verificare env.observation_space.shape)",
-            "num_actions": "N/A (Verificare env.action_space.shape)",
-            "dt": env_cfg.sim.dt,
-        }
-    
-    # Scriviamo il file YAML
-    try:
-        with open(yaml_path, 'w') as f:
-            yaml.safe_dump(env_data, f, sort_keys=False)
-        print(f"[INFO] Esportazione configurazione Environment (.yaml) completata: {yaml_path}")
+        with open(env_cfg_path, 'w') as f:
+            yaml.dump(env_data, f)
+            
     except Exception as e:
-        print(f"[ERRORE ESPORTAZIONE YAML] Impossibile scrivere il file YAML: {e}")
+        print(f"[EXPORT ERROR] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        
+    finally:
+        # === CRITICAL FIX ===
+        # Always move the network back to the original device (GPU).
+        # This prevents the simulator loop from crashing when it tries to use the network again.
+        print(f"[EXPORT] Restoring network to device: {rl_device}")
+        network.to(rl_device)

@@ -11,7 +11,7 @@ import argparse
 import sys
 
 from isaaclab.app import AppLauncher
-from policy_export import export_rl_games_policy, export_environment_config # Assumendo che export_policy.py sia nella stessa dir
+from policy_export import export_rl_games_policy # Assumendo che export_policy.py sia nella stessa dir
 
 
 # add argparse arguments
@@ -189,10 +189,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # 1. Esporta la policy in ONNX e TorchScript (.pt)
     export_rl_games_policy(agent, log_dir, task_name, rl_device)
-    
-    # 2. Esporta la configurazione dell'environment in YAML
-    export_environment_config(env_cfg, log_dir, task_name)
-    
+        
     # ----------------------------------------------------------------------
     # Fine Codice di Esportazione
     # ----------------------------------------------------------------------
