@@ -3,7 +3,8 @@
 
 """
 Script to run IsaacLab Simulation.
-Mode: SCRIPT EDITOR REPLICA
+Mode: NATIVE GRAPH (JointState)
+Fix: Removed crashing ROS2Context node
 """
 
 import argparse
@@ -23,7 +24,6 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 sys.argv = [sys.argv[0]] + hydra_args
 
-# 2. Launch App
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
@@ -36,7 +36,7 @@ import gymnasium as gym
 from isaaclab.envs import DirectRLEnvCfg, ManagerBasedRLEnvCfg
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-# Enable Extensions (Essential for standalone)
+# Enable Extensions
 manager = omni.kit.app.get_app().get_extension_manager()
 exts = ["isaacsim.ros2.bridge"]
 for ext in exts:
@@ -44,7 +44,7 @@ for ext in exts:
         manager.set_extension_enabled_immediate(ext, True)
 
 # =============================================================================
-# HELPER: FIND ROBOT
+# FIND ROBOT
 # =============================================================================
 def find_robot_prim_path():
     stage = omni.usd.get_context().get_stage()
@@ -60,25 +60,24 @@ def find_robot_prim_path():
             break
             
     if not found_path:
-        found_path = "/World/envs/env_0/Robot" # Fallback
+        found_path = "/World/envs/env_0/Robot"
         print(f" [WARN] No root API found. Defaulting to: {found_path}")
 
+    print("="*30 + "\n")
     return found_path
 
 # =============================================================================
-# YOUR EXACT SCRIPT LOGIC
+# ACTION GRAPH
 # =============================================================================
-def setup_user_script_graph(robot_prim_path):
+def setup_graph(robot_prim_path):
     keys = og.Controller.Keys
     graph_path = "/ActionGraph"
     
-    # Clean up any existing graph
     try:
         if og.Controller.graph_exists(graph_path):
             og.Controller.delete_node(graph_path)
     except: pass
 
-    # --- THIS IS YOUR LOGIC ---
     try:
         og.Controller.edit(
             {"graph_path": graph_path, "evaluator_name": "execution"},
@@ -86,57 +85,46 @@ def setup_user_script_graph(robot_prim_path):
                 keys.CREATE_NODES: [
                     ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
                     
-                    # --- NODI ESISTENTI (From your script) ---
-                    ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
-                    # Using SubscribeJointState as you requested, even for Trajectory messages
+                    # --- NODES (No ROS2Context) ---
                     ("SubscribeJointState", "isaacsim.ros2.bridge.ROS2SubscribeJointState"),
                     ("ArticulationController", "isaacsim.core.nodes.IsaacArticulationController"),
+                    ("PublishJointState", "isaacsim.ros2.bridge.ROS2PublishJointState"),
                     ("ReadSimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
-                    
-                    # --- NUOVO NODO FONDAMENTALE (TF) ---
                     ("PublishTF", "isaacsim.ros2.bridge.ROS2PublishTransformTree"),
-                    
-                    # Necessary for Standalone execution to initialize the bridge
-                    ("ROS2Context", "isaacsim.ros2.bridge.ROS2Context"), 
-                    ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"), # Critical for synchronization
+                    ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
                 ],
                 keys.CONNECT: [
-                    # Clock -> Esecuzione Nodi
-                    ("OnPlaybackTick.outputs:tick", "ROS2Context.inputs:execIn"), # Drive context
-                    ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
+                    # Execution
                     ("OnPlaybackTick.outputs:tick", "SubscribeJointState.inputs:execIn"),
                     ("OnPlaybackTick.outputs:tick", "ArticulationController.inputs:execIn"),
+                    ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
                     ("OnPlaybackTick.outputs:tick", "PublishTF.inputs:execIn"),
                     ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
+
+                    # Data
+                    ("SubscribeJointState.outputs:jointNames", "ArticulationController.inputs:jointNames"),
+                    ("SubscribeJointState.outputs:positionCommand", "ArticulationController.inputs:positionCommand"),
                     
-                    # Timestamp
+                    # Time
                     ("ReadSimTime.outputs:simulationTime", "PublishJointState.inputs:timeStamp"),
                     ("ReadSimTime.outputs:simulationTime", "PublishTF.inputs:timeStamp"),
                     ("ReadSimTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
-                    
-                    # Controllo Robot
-                    ("SubscribeJointState.outputs:jointNames", "ArticulationController.inputs:jointNames"),
-                    ("SubscribeJointState.outputs:positionCommand", "ArticulationController.inputs:positionCommand"),
-                    ("SubscribeJointState.outputs:velocityCommand", "ArticulationController.inputs:velocityCommand"),
-                    ("SubscribeJointState.outputs:effortCommand", "ArticulationController.inputs:effortCommand"),
                 ],
                 keys.SET_VALUES: [
-                    # Configurazione Robot
                     ("ArticulationController.inputs:robotPath", robot_prim_path),
                     ("PublishJointState.inputs:targetPrim", robot_prim_path),
+                    ("PublishTF.inputs:targetPrims", [robot_prim_path]),
                     
-                    # --- TOPIC NAMES ---
-                    # I updated this to match your brain script, otherwise they won't talk.
-                    ("SubscribeJointState.inputs:topicName", "/rizon_arm_controller/joint_trajectory"),
+                    # --- TOPICS ---
+                    # Listens to what your Brain publishes (JointState)
+                    ("SubscribeJointState.inputs:topicName", "/isaac_joint_commands"),
+                    
                     ("PublishJointState.inputs:topicName", "/joint_states"),
                     ("PublishClock.inputs:topicName", "/clock"),
-                    
-                    # --- CONFIGURAZIONE TF ---
-                    ("PublishTF.inputs:targetPrims", [robot_prim_path]),
                 ],
             },
         )
-        print(f"[INFO] User Script Graph applied to: {robot_prim_path}")
+        print(f"[INFO] >>> GRAPH CREATED SUCCESSFULLY <<<")
     except Exception as e:
         print(f"[ERROR] Graph Creation Failed: {e}")
 
@@ -150,21 +138,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg: dict):
         env_cfg.sim.use_fabric = False
 
     env = gym.make(args_cli.task, cfg=env_cfg)
-    
-    # 1. Find the Robot (Replacting ROBOT_PATH = "/Rizon4s")
     robot_prim_path = find_robot_prim_path()
-
-    # 2. Build Your Graph
-    setup_user_script_graph(robot_prim_path)
+    setup_graph(robot_prim_path)
 
     env.reset()
-    
-    # Force Play (Required for standalone)
     omni.timeline.get_timeline_interface().play()
     
     print("\n" + "="*50)
     print(" SIMULATION RUNNING")
     print(f" ROS_DOMAIN_ID: {os.environ.get('ROS_DOMAIN_ID', 0)}")
+    print(" Listening to: /isaac_joint_commands (JointState)")
     print("="*50 + "\n")
 
     while simulation_app.is_running():
