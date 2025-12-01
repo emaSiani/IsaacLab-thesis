@@ -1,0 +1,5 @@
+decimation: 2
+dt: 0.0166
+num_observations: 24
+num_rnn_layers: 2
+rnn_units: 1024
