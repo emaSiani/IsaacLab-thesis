@@ -18,7 +18,8 @@ class FlexivGearAssemblyPolicy(PolicyController):
         # 7 DOF del Rizon
         self.dof_names = [f"joint{i}" for i in range(1, 8)]
         self.num_joints = 7
-
+        
+        # deg: [-7,44, -32,7, 24,17, 102,3, -18,16, 40,4, 0.0]   
         self.default_pos = np.array([-0.13, -0.5707, 0.422, 1.7854, -0.317, 0.705, 0.0], dtype=np.float32)
         self.default_vel = np.zeros(self.num_joints, dtype=np.float32)
 

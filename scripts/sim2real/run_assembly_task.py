@@ -28,7 +28,8 @@ class FlexivAssemblyNode(Node):
     CMD_TOPIC = "/rizon_arm_controller/joint_trajectory"
     
     # N.B: Joint names could include robot's serial number
-    serial_number="SN"
+    # serial_number="Rizon4s-063126"
+    serial_number=""
     FLEXIV_JOINT_NAMES = [
         f"{serial_number}_joint1",
         f"{serial_number}_joint2",
@@ -37,11 +38,19 @@ class FlexivAssemblyNode(Node):
         f"{serial_number}_joint5",
         f"{serial_number}_joint6",
         f"{serial_number}_joint7"
+    ] if serial_number else [
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6",
+        "joint7"
     ]
-    
-    BASE_FRAME = f"{serial_number}_base_link"
-    FLANGE_FRAME = f"{serial_number}_flange"
-    
+
+    BASE_FRAME = f"{serial_number}_base_link" if serial_number else "base_link"
+    FLANGE_FRAME = f"{serial_number}_flange" if serial_number else "flange"
+
     # =========================================================================
 
     def __init__(self):
@@ -115,8 +124,7 @@ class FlexivAssemblyNode(Node):
             
             return flange_pos + world_offset[:3]
         except TransformException as ex:
-            # Log warning only occasionally to avoid spamming
-            self.get_logger().warn(f"Joint names are incorrect. Received {self.joint_map.keys} while looking for {self.FLEXIV_JOINT_NAMES}")
+            self.get_logger().warn(f"TF Lookup Failed: {ex}")
             return None
     def joint_state_callback(self, msg: JointState):
         """Updates joint states. Filters out non-arm joints."""
