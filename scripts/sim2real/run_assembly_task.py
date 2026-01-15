@@ -1,222 +1,140 @@
-import math
-import time
-import numpy as np
+# FILE: scripts/sim2real/run_assembly_task.py
 import rclpy
-from builtin_interfaces.msg import Duration
-from sensor_msgs.msg import JointState  # <--- Added for Isaac Sim
-# from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint # <--- REAL ROBOT
 from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-import tf2_ros
-from tf2_ros import TransformException
-import tf_transformations as tr
-
-# Import Policy Logic
+from rclpy.action import ActionClient
+from rclpy.duration import Duration
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+from flexiv_msgs.msg import RobotStates
+from flexiv_msgs.action import Move
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from robots.rizon.assembly import FlexivGearAssemblyPolicy
 from utils.angle_utils import map_joint_angle
 
+SIMULATED = True
+DEBUG = False
+
 class FlexivAssemblyNode(Node):
-    """ROS2 node for deploying Gear Assembly on Flexiv Rizon 4s."""
-
-    PI = math.pi
-    # Simulation/Mapping limits
-    ARM_SIM_DOF_ANGLE_LIMITS = [(-360, 360, False)] * 7
-    # Real Servo limits
-    ARM_SERVO_ANGLE_LIMITS = [(-2 * PI, 2 * PI)] * 7
-    
-    JOINT_STATE_TOPIC = "/joint_states"
-    
-    # --- REAL ROBOT CONFIG (Commented Out) ---
-    # CMD_TOPIC = "/rizon_arm_controller/joint_trajectory"
-
-    # --- ISAAC SIM CONFIG (Active) ---
-    CMD_TOPIC = "/joint_command"
-    
-    # Serial number config
-    serial_number=""
-    FLEXIV_JOINT_NAMES = [
-        f"{serial_number}_joint1",
-        f"{serial_number}_joint2",
-        f"{serial_number}_joint3",
-        f"{serial_number}_joint4",
-        f"{serial_number}_joint5",
-        f"{serial_number}_joint6",
-        f"{serial_number}_joint7"
-    ] if serial_number else [
-        "joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"
-    ]
-
-    BASE_FRAME = f"{serial_number}_base_link" if serial_number else "base_link" # Adjusted for sim safety
-    FLANGE_FRAME = f"{serial_number}_flange" if serial_number else "flange"
-    
-    # =========================================================================
-
     def __init__(self):
         super().__init__("flexiv_assembly_node")
-
-        # Initialize Policy
-        try:
-            self.robot = FlexivGearAssemblyPolicy()
-            self.get_logger().info("Policy loaded successfully.")
-        except Exception as e:
-            self.get_logger().error(f"Failed to initialize policy: {e}")
-            raise e
-
-        # Control Loop
-        self.control_freq = 50.0  
-        self.step_size = 1.0 / self.control_freq 
-        self.timer = self.create_timer(self.step_size, self.step_callback)
         
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        # --- CONFIG ---
+        self.SERIAL = "" # <--- CHECK SN
+        self.GEAR_OFFSET_Z = 0.19913 # Distance from Flange to Gear Tip
+        self.step_counter = 0
 
-        # Subscribers & Publishers
-        self.sub_joints = self.create_subscription(
-            JointState, self.JOINT_STATE_TOPIC, self.joint_state_callback, 1
-        )
+        # State Machine
+        self.STATE_INIT_GRASP = 0
+        self.STATE_RUNNING = 1
 
-        # --- REAL ROBOT PUBLISHER (Commented Out) ---
-        # self.pub_cmd = self.create_publisher(JointTrajectory, self.CMD_TOPIC, 1)
+        # self.STATE_INIT_GRASP if the robot needs to grasp the gear
+        self.current_mode = self.STATE_RUNNING
+        self.grasp_timer = 0
 
-        # --- ISAAC SIM PUBLISHER (Active) ---
-        self.pub_cmd = self.create_publisher(JointState, self.CMD_TOPIC, 1)
-
-        # Offset Gear (Distance Flange -> Gear Tip)
-        self.GEAR_TIP_OFFSET_Z = 0.19913
-
-        self.flag_target_reached = False
+        # Policy
+        self.policy = FlexivGearAssemblyPolicy()
         
-        self.joint_map = {n: 0.0 for n in self.FLEXIV_JOINT_NAMES}
-        self.vel_map = {n: 0.0 for n in self.FLEXIV_JOINT_NAMES}
-        
-        self.get_logger().info(f"Node initialized. Listening for joints: {self.FLEXIV_JOINT_NAMES[0]}...")
+        # IO
+        self.sub_states = self.create_subscription(RobotStates, f"/{self.SERIAL.replace('-', '_')}/flexiv_robot_states", self.cb_states, 1) if self.SERIAL else self.create_subscription(RobotStates, "/flexiv_robot_states", self.cb_states, 1)
+        print(f'Created subscriber on topic /{self.SERIAL.replace("-", "_")}/flexiv_robot_states' if self.SERIAL else 'Created subscriber on topic /flexiv_robot_states')
+        self.pub_arm = self.create_publisher(JointTrajectory, "/rizon_arm_controller/joint_trajectory", 1)
+        print('Created publisher on topic /rizon_arm_controller/joint_trajectory')
+        # self.client_gripper = ActionClient(self, Move, f"/{self.SERIAL}/tool/move") if self.SERIAL else ActionClient(self, Move, "/tool/move")
 
-    def joint_state_callback(self, msg: JointState):
-        """Updates joint states. Filters out non-arm joints."""
-        found_any = False
-        
-        # Debug print only once
-        if not hasattr(self, "_debug_first_joint_msg"):
-            self.get_logger().info(f"[DEBUG] Received JointState names: {msg.name}")
-            self._debug_first_joint_msg = True
+        self.robot_state = None
+        self.create_timer(0.02, self.control_loop)
+        self.get_logger().info("Node Started. Mode: INITIALIZING GRASP")
 
-        for i, name in enumerate(msg.name):
-            if name in self.joint_map:
-                self.joint_map[name] = msg.position[i]
-                if len(msg.velocity) > i:
-                    self.vel_map[name] = msg.velocity[i]
-                found_any = True
-        
-        if found_any:
-            ordered_pos = [self.joint_map[n] for n in self.FLEXIV_JOINT_NAMES]
-            ordered_vel = [self.vel_map[n] for n in self.FLEXIV_JOINT_NAMES]
-            self.robot.update_joint_state(ordered_pos, ordered_vel)
+    def cb_states(self, msg):
+        self.robot_state = msg
+        if DEBUG and self.step_counter % 50 == 0:
+            self.get_logger().info(f'Received Robot State Message: {msg}')
 
-    def get_gear_tip_position(self):
-        """Calculates Gear Tip position using TF + Offset."""
-        try:
-            t = self.tf_buffer.lookup_transform(self.BASE_FRAME, self.FLANGE_FRAME, rclpy.time.Time())
+    def control_loop(self):
+        if self.robot_state is None: return
+
+        # 1. Parse State (Flange Pose)
+        flange_pos = np.array([
+            self.robot_state.tcp_pose.pose.position.x,
+            self.robot_state.tcp_pose.pose.position.y,
+            self.robot_state.tcp_pose.pose.position.z
+        ])
+        # Isaac expects [w, x, y, z]
+        flange_quat = np.array([
+            self.robot_state.tcp_pose.pose.orientation.w,
+            self.robot_state.tcp_pose.pose.orientation.x,
+            self.robot_state.tcp_pose.pose.orientation.y,
+            self.robot_state.tcp_pose.pose.orientation.z
+        ])
+
+        wrench = np.array([
+            self.robot_state.ext_wrench_in_world.wrench.force.x,
+            self.robot_state.ext_wrench_in_world.wrench.force.y,
+            self.robot_state.ext_wrench_in_world.wrench.force.z
+        ])
+        
+        # 2. Apply Gear Offset (Flange -> Gear Tip)
+        # Convert Quat to Rotation Matrix
+        # Scipy uses [x, y, z, w]
+        # r = R.from_quat([flange_quat[1], flange_quat[2], flange_quat[3], flange_quat[0]])
+        # offset_world = r.apply([0.0, 0.0, self.GEAR_OFFSET_Z])
+        
+#         gear_pos = flange_pos + offset_world
+        gear_pos = flange_pos - [0.0, 0.0, self.GEAR_OFFSET_Z]
+        gear_quat = flange_quat # Orientation is same, just translated
+
+        # print robots' state every 1 second if debug is true
+        if DEBUG and self.robot_state is not None and self.step_counter % 50 == 0:
+            self.get_logger().info(f"Step: {self.step_counter}")
+            self.get_logger().info(f"Gear Pos: {gear_pos}")
+            self.get_logger().info(f"Gear Quat: {gear_quat}")
+            self.get_logger().info(f"Wrench: {wrench}")
+
+        # --- STATE MACHINE ---
+        
+        if self.current_mode == self.STATE_INIT_GRASP:
+            # Send Grasp Command ONCE (force closure)
+            if self.grasp_timer == 0:
+                self.send_gripper(0.0) # Close
+                self.get_logger().info("Closing Gripper...")
             
-            q = [t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w]
-            rot_matrix = tr.quaternion_matrix(q)
-            
-            offset_vector = np.array([0.0, 0.0, self.GEAR_TIP_OFFSET_Z, 1.0])
-            world_offset = np.dot(rot_matrix, offset_vector)
-            
-            flange_pos = np.array([t.transform.translation.x, t.transform.translation.y, t.transform.translation.z])
-            
-            return flange_pos + world_offset[:3]
-        except TransformException as ex:
-            # Cleaned up log message to show actual error
-            self.get_logger().warn(f"TF Lookup Failed: {ex}", throttle_duration_sec=2.0)
-            return None
-
-#    def joint_state_callback(self, msg: JointState):
-#        """Updates joint states. Filters out non-arm joints."""
-#        found_any = False
-#        
-#        if not hasattr(self, "_debug_first_joint_msg"):
-#            self.get_logger().info(f"[DEBUG] Received JointState names: {msg.name}")
-#            self._debug_first_joint_msg = True
-#
-#        for i, name in enumerate(msg.name):
-#            if name in self.joint_map:
-#                self.joint_map[name] = msg.position[i]
-#                if len(msg.velocity) > i:
-#                    self.vel_map[name] = msg.velocity[i]
-#                found_any = True
-#        
-#        if found_any:
-#            ordered_pos = [self.joint_map[n] for n in self.FLEXIV_JOINT_NAMES]
-#            ordered_vel = [self.vel_map[n] for n in self.FLEXIV_JOINT_NAMES]
-#            self.robot.update_joint_state(ordered_pos, ordered_vel)
-#        else:
-#            # if here, then we are not finding the joint names
-#            self.get_logger().warn(f"Joint names are incorrect. Received {self.joint_map.keys} while looking for {self.FLEXIV_JOINT_NAMES}")
-#            pass 
-
-    def check_target_reached(self, current_tip_pos):
-        target_pos = self.robot.peg_target_pose[:3]
-        dist = np.linalg.norm(current_tip_pos - target_pos)
-        return dist < 0.005 # 5mm threshold
-
-    def step_callback(self):
-        if self.flag_target_reached:
+            self.grasp_timer += 1
+            # Wait 2 seconds (50Hz * 2s = 100 ticks) for grasp to settle
+            if self.grasp_timer > 100:
+                self.current_mode = self.STATE_RUNNING
+                self.get_logger().info("Grasp Complete. STARTING POLICY.")
             return
 
-        # CHECK 1: TF
-        gear_tip_pos = self.get_gear_tip_position()
-        if gear_tip_pos is None: 
-            return
+        elif self.current_mode == self.STATE_RUNNING:
+            # 3. Run Policy
+            arm_cmd, _ = self.policy.compute_action(gear_pos, gear_quat, wrench)
+
+            # 4. Publish
+            traj = JointTrajectory()
+            traj.header.stamp = self.get_clock().now().to_msg()
+            traj.joint_names = [f"{self.SERIAL}_joint{i}" for i in range(1, 8)] if self.SERIAL else [f"joint{i}" for i in range(1, 8)]
+            pt = JointTrajectoryPoint()
+            pt.positions = [float(x) for x in arm_cmd]
+            pt.time_from_start = Duration(seconds=0.02).to_msg()
+            traj.points.append(pt)
+            self.pub_arm.publish(traj)
             
-        self.robot.update_gear_tip_position(gear_tip_pos)
+            # Enforce Closed Gripper
+            # (Optional: send periodically if needed, but usually one close is enough)
+            # self.send_gripper(0.0)
+        self.step_counter += 1
 
-        joint_cmd = self.robot.forward(self.step_size)
-        if joint_cmd is None:
-            self.get_logger().warn("[DEBUG POLICY FAIL] Policy returned None. Waiting for joint states...", throttle_duration_sec=2.0)
-            return
+    def send_gripper(self, width):
+        goal = Move.Goal()
+        goal.width = width
+        goal.velocity = 0.1
+        goal.max_force = 40.0 # Strong grasp
+        self.client_gripper.send_goal_async(goal)
 
-        self.get_logger().info(f"[DEBUG RUNNING] Action calculated. Target Joint 1: {joint_cmd[0]:.3f}", throttle_duration_sec=1.0)
-
-        # Map angles to servo limits
-        target_pos_mapped = []
-        for i, val in enumerate(joint_cmd):
-            target_pos_mapped.append(map_joint_angle(val, i, self.ARM_SIM_DOF_ANGLE_LIMITS, self.ARM_SERVO_ANGLE_LIMITS))
-
-        # --- REAL ROBOT LOGIC (Commented Out) ---
-        # traj = JointTrajectory()
-        # traj.joint_names = self.FLEXIV_JOINT_NAMES
-        # point = JointTrajectoryPoint()
-        # point.positions = target_pos_mapped
-        # point.time_from_start = Duration(sec=0, nanosec=int(self.step_size * 1e9))
-        # traj.points.append(point)
-        # self.pub_cmd.publish(traj)
-
-        # --- ISAAC SIM LOGIC (Active) ---
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = self.FLEXIV_JOINT_NAMES
-        msg.position = target_pos_mapped
-        # msg.velocity = [] # Optional
-        # msg.effort = []   # Optional
-        self.pub_cmd.publish(msg)
-
-        if self.check_target_reached(gear_tip_pos):
-            self.get_logger().info("ASSEMBLY COMPLETED! Target Reached.")
-            self.flag_target_reached = True
-
-def main(args=None):
-    rclpy.init(args=args)
+def main():
+    rclpy.init()
     node = FlexivAssemblyNode()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
-    try:
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
 
 if __name__ == "__main__":
     main()

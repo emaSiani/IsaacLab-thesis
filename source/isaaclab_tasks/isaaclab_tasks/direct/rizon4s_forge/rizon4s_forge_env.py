@@ -137,6 +137,9 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
 
         obs_tensors = rizon4s_factory_utils.collapse_obs_dict(obs_dict, self.cfg.obs_order + ["prev_actions"])
         state_tensors = rizon4s_factory_utils.collapse_obs_dict(state_dict, self.cfg.state_order + ["prev_actions"])
+
+        # Print nicely observations
+        print(f"Observations: {obs_dict}")
         return {"policy": obs_tensors, "critic": state_tensors}
 
     def _apply_action(self):
