@@ -1,78 +1,161 @@
+# FILE: isaacsim_ros2_bridge.py
+
 import omni.isaac.core.utils.extensions as extensions
-# Force load extensions to prevent missing module errors
-extensions.enable_extension("isaacsim.ros2.bridge")
-extensions.enable_extension("omni.isaac.core")
+# Abilitiamo l'estensione "Nucleare" che usa Isaac Lab sotto il cofano
+extensions.enable_extension("omni.physx.tensors")
 
 import omni.graph.core as og
-import omni.usd
-import omni.kit.commands
 import omni.physx
-from pxr import Sdf, UsdPhysics, PhysxSchema, Gf
-from scipy.spatial.transform import Rotation as R
+import omni.timeline
+import torch
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
-# ROS Imports
+# Importiamo l'API diretta dei tensori
+import omni.physics.tensors as physx_tensors
+
 try:
     import rclpy
     from geometry_msgs.msg import WrenchStamped
 except ImportError:
     pass
 
-from omni.isaac.core.utils.prims import get_prim_at_path
-from omni.isaac.core.articulations import Articulation
+from pxr import Sdf
 from omni.isaac.core.world import World
+from omni.isaac.core.utils.prims import get_prim_at_path
 
-# --- CONFIGURATION ---
+# --- CONFIGURAZIONE ---
 ROBOT_PATH = "/World/Rizon4s_with_Grav" 
 GRAPH_PATH = "/ActionGraph"
 ROBOT_SN = "sn" 
 TOPIC_WRENCH_WORLD = f"/{ROBOT_SN}/external_wrench_in_world"
-SENSOR_JOINT_NAME = "flange_to_gripper"
+TARGET_BODY_NAME = "flange" 
 
-# --- STATE MANAGEMENT ---
+# --- STATO ---
 class WrenchPublisherState:
     def __init__(self):
         self.node = None
         self.pub = None
         self.sub = None
-        self.robot = None
-        self.sensor_joint_index = -1
-        self.sensor_prim_path = ""
-        self.last_error = ""
-        
-        # Calibration Variables
-        self.calibrating = True
-        self.calibration_steps = 0
-        self.bias_y = 22.0
+        self.sim_view = None  # QUESTO sarà il nostro "root_physx_view"
+        self.body_idx = None
+        self.init_done = False
 
 if not hasattr(omni, "wrench_pub_state"):
     omni.wrench_pub_state = WrenchPublisherState()
 state = omni.wrench_pub_state
 
-# --- HELPERS ---
-def setup_force_sensor(robot_path):
-    stage = omni.usd.get_context().get_stage()
-    joint_prim_path = f"{robot_path}/joints/{SENSOR_JOINT_NAME}"
-    joint_prim = stage.GetPrimAtPath(joint_prim_path)
-    
-    if not joint_prim.IsValid():
-        print(f"[WARNING] '{SENSOR_JOINT_NAME}' not found. Falling back to 'joint7'.")
-        joint_prim_path = f"{robot_path}/joints/joint7"
-        joint_prim = stage.GetPrimAtPath(joint_prim_path)
-    
-    state.sensor_prim_path = joint_prim_path 
+# --- CALLBACK ---
+def on_physics_step(dt):
+    timeline = omni.timeline.get_timeline_interface()
+    # I tensori funzionano solo se la simulazione sta girando
+    if not timeline.is_playing(): return
 
-    omni.kit.commands.execute(
-        "AddPhysicsComponent",
-        usd_prim=joint_prim, 
-        component="PhysxArticulationForceSensorAPI"
-    )
+    # 1. INIZIALIZZAZIONE (Manuale, senza classi wrapper)
+    if not state.init_done:
+        try:
+            print("[INIT] Creazione diretta della Simulation View (Root PhysX View)...")
+            
+            # Questa chiamata crea l'oggetto che nel training chiamano 'root_physx_view'
+            # backend="torch" ci dà tensori GPU diretti
+            state.sim_view = physx_tensors.create_simulation_view("torch")
+            
+            # Diciamo alla view di guardare solo il nostro robot
+            state.sim_view.set_subspace_roots([ROBOT_PATH])
+            
+            print("[SUCCESS] View Tensoriale creata.")
+            
+            # --- MAPPARE GLI INDICI ---
+            # La view tensoriale lavora con indici piatti. Dobbiamo trovare quale indice
+            # corrisponde alla flangia.
+            # get_rigid_body_names() restituisce i path completi o parziali
+            body_paths = state.sim_view.get_rigid_body_names()
+            
+            # Cerchiamo l'indice che contiene "flange"
+            found = False
+            for i, path in enumerate(body_paths):
+                if TARGET_BODY_NAME in path:
+                    state.body_idx = i
+                    print(f"[INDEX] Trovato target '{TARGET_BODY_NAME}' all'indice {i}")
+                    print(f"        Path completo: {path}")
+                    found = True
+                    break
+            
+            if not found:
+                print(f"[ERROR] Non ho trovato '{TARGET_BODY_NAME}' nei body della view.")
+                print(f"        Body disponibili: {body_paths}")
+                return
 
-def create_standard_graph():
+            state.init_done = True
+        except Exception as e:
+            # Spesso fallisce al primo frame se PhysX non è "caldo", riprova silenziosamente
+            # print(f"[INIT WAIT] {e}") 
+            return
+
+    # 2. LETTURA DATI (Esattamente come nel Training)
+    try:
+        if state.sim_view is None: return
+
+        # ECCOLA: La chiamata che usano nel training
+        # Restituisce [Num_Envs, Num_Links, 6]
+        forces = state.sim_view.get_link_incoming_joint_force()
+        
+        # Estrazione (Env 0)
+        f_tensor = forces[0, state.body_idx, 0:3] 
+        t_tensor = forces[0, state.body_idx, 3:6]
+        
+        # --- ROTAZIONE ---
+        # Per coerenza, prendiamo anche le pose dalla stessa view tensoriale
+        transforms = state.sim_view.get_rigid_body_poses()
+        # transforms shape: [Num_Envs, Num_Bodies, 7] (Pos: 0-2, Rot: 3-6)
+        
+        # Isaac Sim Core (PhysX) usa quaternioni (x, y, z, w) o (w, x, y, z)?
+        # I tensori PhysX puri di solito usano (x, y, z, w).
+        # Verifichiamo la magnitudo per sicurezza.
+        quat = transforms[0, state.body_idx, 3:7]
+        
+        q = quat.cpu().numpy()
+        f = f_tensor.cpu().numpy()
+        t = t_tensor.cpu().numpy()
+        
+        # Gestione NaN (capita se la sim esplode o è ferma)
+        if np.isnan(f).any(): return
+
+        # Scipy usa (x, y, z, w).
+        # Tentativo standard: assumiamo input (x, y, z, w) dai tensori PhysX
+        r = R.from_quat([q[0], q[1], q[2], q[3]]) 
+        
+        # Se i valori sembrano strani (rotazione sbagliata), prova l'ordine w,x,y,z:
+        # r = R.from_quat([q[1], q[2], q[3], q[0]])
+
+        f_world = r.apply(f)
+        t_world = r.apply(t)
+
+        # STAMPA DEBUG (Ogni tanto)
+        f_mag = np.linalg.norm(f_world)
+        if np.random.rand() < 0.05: # 5% dei frame
+            print(f"[TENSOR] Fz: {f_world[2]:.3f} | Mag: {f_mag:.3f}")
+
+        # Publish ROS
+        msg = WrenchStamped()
+        msg.header.stamp = state.node.get_clock().now().to_msg()
+        msg.header.frame_id = "world"
+        msg.wrench.force.x = float(f_world[0])
+        msg.wrench.force.y = float(f_world[1])
+        msg.wrench.force.z = float(f_world[2])
+        msg.wrench.torque.x = float(t_world[0])
+        msg.wrench.torque.y = float(t_world[1])
+        msg.wrench.torque.z = float(t_world[2])
+        state.pub.publish(msg)
+
+    except Exception as e:
+        # print(f"[RUNTIME] {e}")
+        pass
+
+# --- SETUP GRAFO (Standard) ---
+def create_graph():
     keys = og.Controller.Keys
-    if get_prim_at_path(GRAPH_PATH):
-        return
-
+    if get_prim_at_path(GRAPH_PATH): return
     og.Controller.edit(
         {"graph_path": GRAPH_PATH, "evaluator_name": "execution"},
         {
@@ -94,144 +177,45 @@ def create_standard_graph():
                 ("SubscribeJointState.outputs:jointNames", "ArticulationController.inputs:jointNames"),
                 ("SubscribeJointState.outputs:positionCommand", "ArticulationController.inputs:positionCommand"),
             ],
-            keys.SET_VALUES: [
-                ("SubscribeJointState.inputs:topicName", "/joint_command"),
-            ],
+            keys.SET_VALUES: [("SubscribeJointState.inputs:topicName", "/joint_command")],
         },
     )
-    
-    def set_target(node, rel, target):
-        stage = omni.usd.get_context().get_stage()
-        prim = stage.GetPrimAtPath(node)
-        rel = prim.CreateRelationship(rel, custom=False)
-        rel.SetTargets([Sdf.Path(target)])
-
-    set_target(f"{GRAPH_PATH}/ArticulationController", "inputs:targetPrim", ROBOT_PATH)
-    set_target(f"{GRAPH_PATH}/PublishJointState", "inputs:targetPrim", ROBOT_PATH)
-    set_target(f"{GRAPH_PATH}/PublishTF", "inputs:targetPrims", ROBOT_PATH)
-
-# --- PHYSICS CALLBACK ---
-def on_physics_step(dt):
-    if not state.robot: return
-
-    # Self-Healing
-    if not state.robot.handles_initialized:
-        if state.robot.prim.IsValid():
-            try: state.robot.initialize()
-            except: return 
-        else: return 
-
-    try:
-        # 1. Get Raw Data
-        forces = state.robot.get_measured_joint_forces()
-        if forces is None: return
-
-        # 2. Find Sensor Index
-        if state.sensor_joint_index == -1:
-            dof_names = state.robot.dof_names
-            found = False
-            for i, name in enumerate(dof_names):
-                if SENSOR_JOINT_NAME in name:
-                    state.sensor_joint_index = i
-                    found = True
-                    break
-            if not found:
-                state.sensor_joint_index = len(forces) - 1
-
-        # 3. Extract Local Wrench
-        raw_wrench = forces[state.sensor_joint_index, :] 
-        force_local = raw_wrench[0:3]
-        torque_local = raw_wrench[3:6]
-
-        # 4. ROTATION FIX
-        stage = omni.usd.get_context().get_stage()
-        prim = stage.GetPrimAtPath(state.sensor_prim_path)
-        
-        # Get Transform directly (It returns Gf.Matrix4d)
-        transform_matrix = omni.usd.get_world_transform_matrix(prim)
-        
-        # Extract Rotation directly from the Matrix
-        rotation = transform_matrix.ExtractRotation()
-        quat = rotation.GetQuat() # (w, x, y, z)
-        
-        # Convert to Scipy format (x, y, z, w)
-        imag = quat.GetImaginary()
-        scipy_quat = [imag[0], imag[1], imag[2], quat.GetReal()]
-        
-        # Apply Rotation
-        r = R.from_quat(scipy_quat)
-        force_world = r.apply(force_local)
-        torque_world = r.apply(torque_local)
-
-        # -----------------------------------------------------------------
-        # CALIBRATION LOGIC (Y-AXIS ONLY)
-        # -----------------------------------------------------------------
-        if state.calibrating:
-            # Accumulate Y force
-            state.calibrating = False
-            print(f"==========================================")
-            print(f"[CALIBRATION COMPLETE] Y-Bias set to: {state.bias_y:.4f}")
-            print(f"==========================================")
-            
-            return # Don't publish while calibrating
-
-        # Apply Bias (Subtract calculated offset from current reading)
-        force_world[1] -= state.bias_y
-        # -----------------------------------------------------------------
-
-        # 5. Publish
-        msg = WrenchStamped()
-        msg.header.stamp = state.node.get_clock().now().to_msg()
-        msg.header.frame_id = "world"
-        
-        msg.wrench.force.x = float(force_world[0])
-        msg.wrench.force.y = float(force_world[1])
-        msg.wrench.force.z = float(force_world[2])
-        msg.wrench.torque.x = float(torque_world[0])
-        msg.wrench.torque.y = float(torque_world[1])
-        msg.wrench.torque.z = float(torque_world[2])
-        
-        state.pub.publish(msg)
-        
-    except Exception as e:
-        if state.last_error != str(e):
-            print(f"[ERROR in Callback] {e}")
-            state.last_error = str(e)
-
-# --- EXECUTION ---
-setup_force_sensor(ROBOT_PATH)
-create_standard_graph()
+    stage = omni.usd.get_context().get_stage()
+    for node in ["ArticulationController", "PublishJointState"]:
+        prim = stage.GetPrimAtPath(f"{GRAPH_PATH}/{node}")
+        rel = prim.CreateRelationship("inputs:targetPrim", custom=False)
+        rel.SetTargets([Sdf.Path(ROBOT_PATH)])
+    prim = stage.GetPrimAtPath(f"{GRAPH_PATH}/PublishTF")
+    rel = prim.CreateRelationship("inputs:targetPrims", custom=False)
+    rel.SetTargets([Sdf.Path(ROBOT_PATH)])
 
 world = World.instance()
-if world is None:
-    world = World()
+if world is None: world = World()
 
-try:
-    rclpy.init()
-except:
-    pass
+# CLEANUP
+if state.sub: 
+    state.sub.unsubscribe()
+    state.sub = None
+state.sim_view = None
+state.init_done = False
 
-# Force Reset Calibration on Script Run
-state.calibrating = True
-state.calibration_steps = 0
-state.bias_y = 22.0
-print("[INFO] Script Loaded. Calibration started (60 steps)...")
-
+try: rclpy.init()
+except: pass
 if state.node is None:
     state.node = rclpy.create_node("isaac_wrench_script_pub")
     state.pub = state.node.create_publisher(WrenchStamped, TOPIC_WRENCH_WORLD, 10)
-    
-    state.robot = world.scene.add(Articulation(ROBOT_PATH, name="rizon_robot"))
-    
-    print("[INFO] Resetting World to initialize physics handles...")
+
+create_graph()
+
+if get_prim_at_path(ROBOT_PATH).IsValid():
+    print("[INFO] Resetting World...")
     world.reset()
+    if world.scene.get_object("rizon_robot"):
+        world.scene.remove_object("rizon_robot")
 
     physx_interface = omni.physx.get_physx_interface()
-    if state.sub: state.sub = None 
     state.sub = physx_interface.subscribe_physics_step_events(on_physics_step)
-    
-    print(f"[SUCCESS] Wrench Publishing to {TOPIC_WRENCH_WORLD} (World Frame)")
+    print(f"[SUCCESS] Script v39 (Direct Root View) Caricato.")
+    print("Bypass totale dei wrapper Python. Accesso diretto alla GPU.")
 else:
-    print("[INFO] Logic updated.")
-    physx_interface = omni.physx.get_physx_interface()
-    state.sub = physx_interface.subscribe_physics_step_events(on_physics_step)
+    print(f"[FATAL] Robot non trovato: {ROBOT_PATH}")

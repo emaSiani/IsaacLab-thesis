@@ -108,7 +108,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         print("Body names index: ", self._robot.body_names.index)
         self.left_finger_body_idx = self._robot.body_names.index("left_finger_tip")
         self.right_finger_body_idx = self._robot.body_names.index("right_finger_tip")
-        self.fingertip_body_idx = self._robot.body_names.index("flange")
+        self.fingertip_body_idx = self._robot.body_names.index("fingertip_midpoint")
 
         # Tensors for finite-differencing.
         self.last_update_timestamp = 0.0  # Note: This is for finite differencing body velocities.
@@ -176,7 +176,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         # NOTE: This offset needs to be correct for your robot.
         # self.fingertip_midpoint_pos[:,0] -= 0.0003 #
         #self.fingertip_midpoint_pos[:,1] += 0.03 #  
-        self.fingertip_midpoint_pos[:,2] -= 0.19913 #
+        # self.fingertip_midpoint_pos[:,2] -= 0.19913 #
     
         
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]

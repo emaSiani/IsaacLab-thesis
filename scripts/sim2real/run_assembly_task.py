@@ -1,135 +1,163 @@
 # FILE: scripts/sim2real/run_assembly_task.py
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionClient
 from rclpy.duration import Duration
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import numpy as np
-from scipy.spatial.transform import Rotation as R
-from flexiv_msgs.msg import RobotStates
-from flexiv_msgs.action import Move
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from robots.rizon.assembly import FlexivGearAssemblyPolicy
-from utils.angle_utils import map_joint_angle
+import os
+import pinocchio as pin
 
-SIMULATED = True
-DEBUG = False
+# Messaggi ROS
+from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+# --- IMPORT CRITICO FLEXIV ---
+try:
+    from flexiv_msgs.msg import RobotStates
+    FLEXIV_IMPORTED = True
+except ImportError:
+    FLEXIV_IMPORTED = False
+    print("\n\n🔴 [ERRORE FATALE] flexiv_msgs non trovato!")
+    print("Non posso ricevere Pose e Wrench. Fai 'source install/setup.bash'.\n\n")
+
+# Policy
+from robots.rizon.assembly import FlexivGearAssemblyPolicy
+
+# --- CONFIGURAZIONE ---
+URDF_PATH = "robots/rizon4s_kinematics.urdf"
+CONTROL_FREQ = 15.0
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
         super().__init__("flexiv_assembly_node")
         
-        # --- CONFIG ---
-        self.SERIAL = "" # <--- CHECK SN
-        self.GEAR_OFFSET_Z = 0.19913 # Distance from Flange to Gear Tip
-        self.step_counter = 0
+        self.dt = 1.0 / CONTROL_FREQ
+        self.joint_names_ordered = [f"joint{i}" for i in range(1, 8)]
 
-        # State Machine
-        self.STATE_INIT_GRASP = 0
-        self.STATE_RUNNING = 1
-
-        # self.STATE_INIT_GRASP if the robot needs to grasp the gear
-        self.current_mode = self.STATE_RUNNING
-        self.grasp_timer = 0
-
-        # Policy
+        # Variabili Stato
+        self.robot_state = None      # Pose/Wrench
+        self.current_q = None        # Giunti
         self.policy = FlexivGearAssemblyPolicy()
-        
-        # IO
-        self.sub_states = self.create_subscription(RobotStates, f"/{self.SERIAL.replace('-', '_')}/flexiv_robot_states", self.cb_states, 1) if self.SERIAL else self.create_subscription(RobotStates, "/flexiv_robot_states", self.cb_states, 1)
-        print(f'Created subscriber on topic /{self.SERIAL.replace("-", "_")}/flexiv_robot_states' if self.SERIAL else 'Created subscriber on topic /flexiv_robot_states')
-        self.pub_arm = self.create_publisher(JointTrajectory, "/rizon_arm_controller/joint_trajectory", 1)
-        print('Created publisher on topic /rizon_arm_controller/joint_trajectory')
-        # self.client_gripper = ActionClient(self, Move, f"/{self.SERIAL}/tool/move") if self.SERIAL else ActionClient(self, Move, "/tool/move")
 
-        self.robot_state = None
-        self.create_timer(0.02, self.control_loop)
-        self.get_logger().info("Node Started. Mode: INITIALIZING GRASP")
+        # --- SETUP PINOCCHIO ---
+        if not os.path.exists(URDF_PATH):
+            self.get_logger().error(f"URDF MANCANTE: {os.path.abspath(URDF_PATH)}")
+            raise FileNotFoundError("Manca il file rizon4s_kinematics.urdf")
+            
+        self.model = pin.buildModelFromUrdf(URDF_PATH)
+        self.data = self.model.createData()
+        self.frame_id = self.model.getFrameId("flange") if self.model.existFrame("flange") else self.model.nframes - 1
+        
+        # --- DEFINIZIONE QoS (BEST EFFORT) ---
+        # Questo è il trucco per leggere qualsiasi topic (Sim o Real)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # --- SUBSCRIBERS ---
+        # 1. Joint States
+        self.sub_joints = self.create_subscription(
+            JointState, 
+            "/joint_states", 
+            self.cb_joints, 
+            qos_profile  # <--- QoS PERMISSIVO
+        )
+        
+        # 2. Robot States
+        if FLEXIV_IMPORTED:
+            self.sub_states = self.create_subscription(
+                RobotStates, 
+                "/flexiv_robot_states", 
+                self.cb_states, 
+                qos_profile # <--- QoS PERMISSIVO
+            )
+        
+        # Publisher
+        self.pub_traj = self.create_publisher(JointTrajectory, "/rizon_arm_controller/joint_trajectory", 1)
+
+        self.create_timer(self.dt, self.control_loop)
+        self.get_logger().info("✅ Nodo Avviato. In attesa dei dati...")
 
     def cb_states(self, msg):
+        if self.robot_state is None:
+            self.get_logger().info("--> Ricevuto primo RobotStates!")
         self.robot_state = msg
-        if DEBUG and self.step_counter % 50 == 0:
-            self.get_logger().info(f'Received Robot State Message: {msg}')
+
+    def cb_joints(self, msg):
+        if self.current_q is None:
+            self.get_logger().info("--> Ricevuto primo JointState!")
+        try:
+            q_map = {name: pos for name, pos in zip(msg.name, msg.position)}
+            q_ordered = [q_map[name] for name in self.joint_names_ordered]
+            self.current_q = np.array(q_ordered)
+        except KeyError:
+            pass
 
     def control_loop(self):
-        if self.robot_state is None: return
+        # --- DIAGNOSTICA (Ti dice cosa manca) ---
+        missing = []
+        if self.robot_state is None: missing.append("/flexiv_robot_states")
+        if self.current_q is None: missing.append("/joint_states")
+        
+        if missing:
+            # Stampa ogni 2 secondi per non spammare
+            self.get_logger().warn(f"Sto aspettando: {missing}", throttle_duration_sec=2.0)
+            return
 
-        # 1. Parse State (Flange Pose)
-        flange_pos = np.array([
+        # --- 1. JACOBIANO ---
+        pin.forwardKinematics(self.model, self.data, self.current_q)
+        pin.computeJointJacobians(self.model, self.data, self.current_q)
+        pin.updateFramePlacements(self.model, self.data)
+        J = pin.getFrameJacobian(self.model, self.data, self.frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
+
+        # --- 2. INPUT POLICY ---
+        pos = np.array([
             self.robot_state.tcp_pose.pose.position.x,
             self.robot_state.tcp_pose.pose.position.y,
             self.robot_state.tcp_pose.pose.position.z
         ])
-        # Isaac expects [w, x, y, z]
-        flange_quat = np.array([
-            self.robot_state.tcp_pose.pose.orientation.w,
+        quat = np.array([
             self.robot_state.tcp_pose.pose.orientation.x,
             self.robot_state.tcp_pose.pose.orientation.y,
-            self.robot_state.tcp_pose.pose.orientation.z
+            self.robot_state.tcp_pose.pose.orientation.z,
+            self.robot_state.tcp_pose.pose.orientation.w
         ])
-
         wrench = np.array([
             self.robot_state.ext_wrench_in_world.wrench.force.x,
             self.robot_state.ext_wrench_in_world.wrench.force.y,
             self.robot_state.ext_wrench_in_world.wrench.force.z
         ])
-        
-        # 2. Apply Gear Offset (Flange -> Gear Tip)
-        # Convert Quat to Rotation Matrix
-        # Scipy uses [x, y, z, w]
-        # r = R.from_quat([flange_quat[1], flange_quat[2], flange_quat[3], flange_quat[0]])
-        # offset_world = r.apply([0.0, 0.0, self.GEAR_OFFSET_Z])
-        
-#         gear_pos = flange_pos + offset_world
-        gear_pos = flange_pos - [0.0, 0.0, self.GEAR_OFFSET_Z]
-        gear_quat = flange_quat # Orientation is same, just translated
 
-        # print robots' state every 1 second if debug is true
-        if DEBUG and self.robot_state is not None and self.step_counter % 50 == 0:
-            self.get_logger().info(f"Step: {self.step_counter}")
-            self.get_logger().info(f"Gear Pos: {gear_pos}")
-            self.get_logger().info(f"Gear Quat: {gear_quat}")
-            self.get_logger().info(f"Wrench: {wrench}")
+        # --- 3. INFERENZA ---
+        raw_action = self.policy.compute_action(pos, quat, wrench)
 
-        # --- STATE MACHINE ---
-        
-        if self.current_mode == self.STATE_INIT_GRASP:
-            # Send Grasp Command ONCE (force closure)
-            if self.grasp_timer == 0:
-                self.send_gripper(0.0) # Close
-                self.get_logger().info("Closing Gripper...")
-            
-            self.grasp_timer += 1
-            # Wait 2 seconds (50Hz * 2s = 100 ticks) for grasp to settle
-            if self.grasp_timer > 100:
-                self.current_mode = self.STATE_RUNNING
-                self.get_logger().info("Grasp Complete. STARTING POLICY.")
-            return
+        # --- 4. DIFF-IK ---
+        pos_scale = self.policy.pos_action_bounds 
+        rot_scale = self.policy.rot_action_bounds 
+        v_lin = (raw_action[0:3] * pos_scale) / self.dt
+        v_ang = (raw_action[3:6] * rot_scale) / self.dt
+        target_twist = np.concatenate([v_lin, v_ang])
 
-        elif self.current_mode == self.STATE_RUNNING:
-            # 3. Run Policy
-            arm_cmd, _ = self.policy.compute_action(gear_pos, gear_quat, wrench)
+        dls_lambda = 0.05
+        J_T = J.T
+        J_pinv = J_T @ np.linalg.inv(J @ J_T + dls_lambda**2 * np.eye(6))
+        q_dot = J_pinv @ target_twist
+        q_cmd = self.current_q + q_dot * self.dt
 
-            # 4. Publish
-            traj = JointTrajectory()
-            traj.header.stamp = self.get_clock().now().to_msg()
-            traj.joint_names = [f"{self.SERIAL}_joint{i}" for i in range(1, 8)] if self.SERIAL else [f"joint{i}" for i in range(1, 8)]
-            pt = JointTrajectoryPoint()
-            pt.positions = [float(x) for x in arm_cmd]
-            pt.time_from_start = Duration(seconds=0.02).to_msg()
-            traj.points.append(pt)
-            self.pub_arm.publish(traj)
-            
-            # Enforce Closed Gripper
-            # (Optional: send periodically if needed, but usually one close is enough)
-            # self.send_gripper(0.0)
-        self.step_counter += 1
+        # --- 5. INVIO ---
+        self.publish_cmd(q_cmd)
 
-    def send_gripper(self, width):
-        goal = Move.Goal()
-        goal.width = width
-        goal.velocity = 0.1
-        goal.max_force = 40.0 # Strong grasp
-        self.client_gripper.send_goal_async(goal)
+    def publish_cmd(self, q_target):
+        traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
+        traj.joint_names = self.joint_names_ordered
+        pt = JointTrajectoryPoint()
+        pt.positions = q_target.tolist()
+        pt.time_from_start = Duration(seconds=self.dt).to_msg()
+        traj.points.append(pt)
+        self.pub_traj.publish(traj)
 
 def main():
     rclpy.init()

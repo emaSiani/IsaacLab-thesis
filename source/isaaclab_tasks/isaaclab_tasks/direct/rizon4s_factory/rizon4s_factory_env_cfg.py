@@ -129,7 +129,7 @@ class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"source/robots/Rizon4s_with_Grav.usd",
+            usd_path=f"source/robots/Rizon4s_with_Grav_fixed.usd",
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,

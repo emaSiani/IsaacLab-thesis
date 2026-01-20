@@ -138,8 +138,26 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         obs_tensors = rizon4s_factory_utils.collapse_obs_dict(obs_dict, self.cfg.obs_order + ["prev_actions"])
         state_tensors = rizon4s_factory_utils.collapse_obs_dict(state_dict, self.cfg.state_order + ["prev_actions"])
 
-        # Print nicely observations
-        print(f"Observations: {obs_dict}")
+        # --- NEW DASHBOARD PRINTING LOGIC ---
+        # --- STEP 1: PREPARE OBSERVATION STRING (DO NOT PRINT) ---
+        if self.episode_length_buf[0] % 15 == 0:
+            import numpy as np
+            output = "================= LIVE OBSERVATIONS (Env 0) =================\n"
+            keys_to_show = ["fingertip_pos_rel_fixed", "fingertip_quat", "ft_force", "prev_actions"]
+
+            for key in keys_to_show:
+                if key in obs_dict:
+                    val = obs_dict[key]
+                    if isinstance(val, torch.Tensor):
+                        val_np = val[0].detach().cpu().numpy()
+                        val_str = np.array2string(val_np, precision=4, suppress_small=True, floatmode='fixed')
+                    else:
+                        val_str = str(val)
+                    output += f"{key:<25}: {val_str}\n"
+            
+            # Save this string to the class instance to use later
+            self._obs_debug_str = output
+        # ---------------------------------------------------------
         return {"policy": obs_tensors, "critic": state_tensors}
 
     def _apply_action(self):
@@ -264,6 +282,40 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
             rew_buf += rew_dict[rew_name] * rew_scales[rew_name]
 
         self._log_forge_metrics(rew_dict, policy_success_pred)
+
+        # --- DASHBOARD PRINTING (REWARDS) ---
+# --- STEP 2: COMBINE AND PRINT EVERYTHING ---
+        # We check the same condition (mod 15) to keep sync
+        if self.episode_length_buf[0] % 15 == 0:
+            import numpy as np
+            
+            # 1. Clear Screen
+            full_dashboard = "\033[H\033[J" 
+            
+            # 2. Add Observation Data (Retrieved from Step 1)
+            if hasattr(self, "_obs_debug_str"):
+                full_dashboard += self._obs_debug_str
+            
+            # 3. Add Reward Data
+            full_dashboard += "\n----------------- LIVE REWARDS (Env 0) -----------------\n"
+            total_step_reward = rew_buf[0].item()
+
+            for name, val_tensor in rew_dict.items():
+                scale = rew_scales[name]
+                if isinstance(val_tensor, torch.Tensor):
+                    raw_val = val_tensor[0].item()
+                else:
+                    raw_val = val_tensor
+                
+                weighted_val = raw_val * scale
+                full_dashboard += f"{name:<25}: {raw_val:8.4f} | (x{scale}) -> {weighted_val:8.4f}\n"
+
+            full_dashboard += f"{'TOTAL STEP REWARD':<25}:          |            -> {total_step_reward:8.4f}\n"
+            full_dashboard += "============================================================"
+            
+            # 4. Single Atomic Print (Prevents flickering)
+            print(full_dashboard)
+        # --------------------------------------------
         return rew_buf
 
     def _reset_idx(self, env_ids):
