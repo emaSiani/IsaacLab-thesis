@@ -33,7 +33,7 @@ def compute_dof_torque(
     device,
     dead_zone_thresholds=None,
 ):
-    """Compute Franka DOF torque to move fingertips towards target pose."""
+    """Compute Rizon DOF torque to move fingertips towards target pose."""
     # References:
     # 1) https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
     # 2) Modern Robotics
@@ -109,7 +109,7 @@ def get_pose_error(
     jacobian_type,
     rot_error_type,
 ):
-    """Compute task-space error between target Franka fingertip pose and current pose."""
+    """Compute task-space error between target Rizon fingertip pose and current pose."""
     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
     # Compute pos error

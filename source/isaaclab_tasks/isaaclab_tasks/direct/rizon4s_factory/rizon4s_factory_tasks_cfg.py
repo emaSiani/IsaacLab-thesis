@@ -8,8 +8,15 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
-ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
+#####################################################
+# Configuration classes for Rizon4s Factory tasks.
+# Defines:
+# - Fixed and held asset properties
+# - Robot properties (e.g. USD, friction, relative pose of the end effector relative to the fixed asset)
+# - Task properties (duration, initial poses, rewards scaling factors, etc.)
 
+
+ASSET_DIR = f"{ISAACLAB_NUCLEUS_DIR}/Factory"
 
 @configclass
 class FixedAssetCfg:
@@ -33,6 +40,7 @@ class HeldAssetCfg:
 @configclass
 class RobotCfg:
     robot_usd: str = ""
+    # TODO: Remove
     franka_fingerpad_length: float = 0.017608
     friction: float = 0.75
 

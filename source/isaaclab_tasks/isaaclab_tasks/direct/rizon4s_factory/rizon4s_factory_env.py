@@ -9,7 +9,6 @@ import torch
 import carb
 import isaacsim.core.utils.torch as torch_utils
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-import isaaclab.sim as sim_utils  # <-- Aggiungi questo import
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
@@ -167,29 +166,15 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         # expand rot_correction to match env size
         self.held_quat = torch_utils.quat_mul(rot_correction, self.held_quat)
 
-        # Position is based on the 'flange' (self.fingertip_body_idx)
+        # Position is based on the 'fingertip_midpoint' body.
         self.fingertip_midpoint_pos = self._robot.data.body_pos_w[:, self.fingertip_body_idx] - self.scene.env_origins
-        # print("Fingertip midpoint pos: ", self.fingertip_midpoint_pos)
-        # print("X coordinate: ", self.fingertip_midpoint_pos[:, 0])
-        
-        # Flange to tip offset translation
-        # NOTE: This offset needs to be correct for your robot.
-        # self.fingertip_midpoint_pos[:,0] -= 0.0003 #
-        #self.fingertip_midpoint_pos[:,1] += 0.03 #  
-        # self.fingertip_midpoint_pos[:,2] -= 0.19913 #
-    
-        
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]
         self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w[:, self.fingertip_body_idx]
         self.fingertip_midpoint_angvel = self._robot.data.body_ang_vel_w[:, self.fingertip_body_idx]
 
         jacobians = self._robot.root_physx_view.get_jacobians()
 
-        # ### THIS IS THE FIX ###
-        # The Jacobian MUST be calculated from the same body as the position (the 'flange').
-        # The old code (averaging fingertips) was creating an unstable controller.
         self.fingertip_midpoint_jacobian = jacobians[:, self.fingertip_body_idx - 1, 0:6, 0:7]
-        
         self.arm_mass_matrix = self._robot.root_physx_view.get_generalized_mass_matrices()[:, 0:7, 0:7]
         self.joint_pos = self._robot.data.joint_pos.clone()
         self.joint_vel = self._robot.data.joint_vel.clone()

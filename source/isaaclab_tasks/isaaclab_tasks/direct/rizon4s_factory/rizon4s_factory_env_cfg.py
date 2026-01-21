@@ -15,6 +15,15 @@ from isaaclab.utils import configclass
 
 from .rizon4s_factory_tasks_cfg import ASSET_DIR, Rizon4sFactoryTask, GearMesh, NutThread, PegInsert
 
+##############################################################
+# Configuration class that defines: 
+# - observation and state dimensions,
+# - Initial joint positions and task gains,
+# - Randomization parameters of the fixed asset, the robot controller parameters, 
+# - Control parameters of the Rizon4s robot,
+# - Simulation and scene parameters.
+
+
 OBS_DIM_CFG = {
     "fingertip_pos": 3,
     "fingertip_pos_rel_fixed": 3,
@@ -42,8 +51,8 @@ STATE_DIM_CFG = {
 }
 
 GRIPPER_OPEN_ANGLE = 0.122173
-print('Gripper open angle set to ', GRIPPER_OPEN_ANGLE)
-# print(f"Gripper open angle (rad): {GRIPPER_OPEN_ANGLE}")
+
+
 @configclass
 class ObsRandCfg:
     fixed_asset_pos = [0.001, 0.001, 0.001]
@@ -60,11 +69,8 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
 
     # Default joint position, task gains, and rot deriv scale used during reset.
-    # reset_joints = [-0.1, -0.42, 0.4, 1.96, -0.317, 0.5986, 0.0]
     reset_joints = [-0.13, -0.5707, 0.422, 1.7854, -0.317, 0.705, 0.0]
 
-    #reset_joints = [0.0, -0.342, 0.4, 1.5708, 0.0, 0.471, 0.677]
-    # reset_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
     default_task_prop_gains = [100, 100, 100, 30, 30, 30]

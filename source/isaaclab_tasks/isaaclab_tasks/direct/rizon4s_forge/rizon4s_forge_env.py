@@ -33,7 +33,6 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         for thresh in [0.5, 0.6, 0.7, 0.8, 0.9]:
             self.first_pred_success_tx[thresh] = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.flip_quats = torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
-        print("Is flange in body names? ", "flange" in self._robot.body_names)
         self.force_sensor_body_idx = self._robot.body_names.index("flange")
         self.force_sensor_smooth = torch.zeros((self.num_envs, 6), device=self.device)
         self.force_sensor_world_smooth = torch.zeros((self.num_envs, 6), device=self.device)
@@ -140,10 +139,12 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
 
         # --- NEW DASHBOARD PRINTING LOGIC ---
         # --- STEP 1: PREPARE OBSERVATION STRING (DO NOT PRINT) ---
+
+        ## TODO : Check if correct
         if self.episode_length_buf[0] % 15 == 0:
             import numpy as np
             output = "================= LIVE OBSERVATIONS (Env 0) =================\n"
-            keys_to_show = ["fingertip_pos_rel_fixed", "fingertip_quat", "ft_force", "prev_actions"]
+            keys_to_show = self.cfg.obs_order + ["prev_actions"]
 
             for key in keys_to_show:
                 if key in obs_dict:
