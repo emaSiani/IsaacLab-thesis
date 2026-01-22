@@ -194,7 +194,7 @@ class FlexivAssemblyNode(Node):
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
         
-        max_q_step = 0.015
+        max_q_step = 0.0075
         q_cmd = np.clip(q_cmd, self.current_q - max_q_step, self.current_q + max_q_step)
 
         self.publish_cmd(q_cmd)
