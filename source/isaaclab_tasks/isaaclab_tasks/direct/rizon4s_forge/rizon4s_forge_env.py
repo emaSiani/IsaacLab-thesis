@@ -285,10 +285,9 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         self._log_forge_metrics(rew_dict, policy_success_pred)
 
         # --- DASHBOARD PRINTING (REWARDS) ---
-# --- STEP 2: COMBINE AND PRINT EVERYTHING ---
+        # --- STEP 2: COMBINE AND PRINT EVERYTHING ---
         # We check the same condition (mod 15) to keep sync
         if self.episode_length_buf[0] % 15 == 0:
-            import numpy as np
             
             # 1. Clear Screen
             full_dashboard = "\033[H\033[J" 
@@ -301,10 +300,15 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
             full_dashboard += "\n----------------- LIVE REWARDS (Env 0) -----------------\n"
             total_step_reward = rew_buf[0].item()
 
-            for name, val_tensor in rew_dict.items():
-                scale = rew_scales[name]
+            factory_rew_dict, factory_rew_scales = super()._get_factory_rew_dict(self._get_curr_successes(
+            success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
+        ))
+
+            # log both factory rew dict and forge rew_dict by combining their items
+            for name, val_tensor in {**factory_rew_dict, **rew_dict}.items():
+                scale = {**factory_rew_scales, **rew_scales}[name]
                 if isinstance(val_tensor, torch.Tensor):
-                    raw_val = val_tensor[0].item()
+                    raw_val = val_tensor[0].item() if val_tensor.numel() > 1 else val_tensor.item()
                 else:
                     raw_val = val_tensor
                 
