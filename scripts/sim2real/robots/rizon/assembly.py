@@ -14,8 +14,6 @@ class FlexivGearAssemblyPolicy:
         self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
         self.fixed_pos[0] += 0.02025  # offset of the bolt
         
-        # Soglia usata nel training (Verifica se era 5.0 o 0.014!)
-        # Se nel training era 5.0, metti 5.0 qui.
         self.force_threshold = np.array([0.1]) 
 
         # --- MODEL LOAD ---

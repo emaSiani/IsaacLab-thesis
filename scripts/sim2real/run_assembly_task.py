@@ -26,7 +26,7 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 15.0 
 DEBUG = True
-SUCCESS_THRESHOLD = 0.999
+SUCCESS_THRESHOLD = 0.99
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
