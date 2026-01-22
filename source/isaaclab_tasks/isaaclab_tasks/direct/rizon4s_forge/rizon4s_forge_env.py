@@ -287,7 +287,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         # --- DASHBOARD PRINTING (REWARDS) ---
         # --- STEP 2: COMBINE AND PRINT EVERYTHING ---
         # We check the same condition (mod 15) to keep sync
-        if self.episode_length_buf[0] % 15 == 0:
+        if self.episode_length_buf[0] % 15 == 0 or self.episode_length_buf[0] == 1:
             
             # 1. Clear Screen
             full_dashboard = "\033[H\033[J" 

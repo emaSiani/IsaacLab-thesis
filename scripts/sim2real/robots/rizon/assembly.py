@@ -3,38 +3,52 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation as R
 
+DEBUG = True
+
 class FlexivGearAssemblyPolicy:
     def __init__(self):
         # --- PATH CONFIG ---
-        self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_fixed_midpoint_policy.pt"
+        self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
         
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
-        # Devi misurarla con precisione millimetrica!
-        self.fixed_pos = np.array([0.61422, 0.03906, 0.06479]) 
+        self.fixed_pos = np.array([0.61435, 0.03932, 0.07822]) 
         
-        # Soglia usata nel training
-        self.force_threshold = np.array([5.14]) 
+        # Soglia usata nel training (Verifica se era 5.0 o 0.014!)
+        # Se nel training era 5.0, metti 5.0 qui.
+        self.force_threshold = np.array([0.1]) 
 
         # --- MODEL LOAD ---
         self.device = torch.device("cpu")
+        print(f"Loading JIT policy from: {self.policy_path}")
         self.model = torch.jit.load(self.policy_path, map_location=self.device)
         self.model.eval()
 
         # --- PARAMETRI TRAINING ---
-        # Devono essere IDENTICI a `rizon4s_forge_env_cfg.py`
-        self.dt = 0.02 
-        self.decimation = 8 # Training decimation (120Hz / 8 = 15Hz)
+        self.dt = 1.0 / 15.0 # ~0.066s (corretto rispetto a 0.02s di simulazione fisica pura)
+        # Nota: self.dt qui è il dt di CONTROLLO (decimato). 
         
-        # Scaling actions (da CtrlCfg)
+        # Bounds & Thresholds
         self.pos_action_bounds = np.array([0.05, 0.05, 0.05], dtype=np.float32)
         self.rot_action_bounds = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        
+        # Clipping
+        self.pos_threshold = 0.02
+        self.rot_threshold = 0.097
 
-        # --- STATE ---
+        # EMA Smoothing (Azioni)
+        self.ema_factor = 0.05
+        
+        # FT Smoothing (Forza) - Dal config originale ft_smoothing_factor = 0.25
+        self.ft_smoothing_factor = 0.25
+
+        # --- STATE BUFFERS ---
         self.prev_ee_pos = None
         self.prev_ee_quat = None 
-        # Action buffer size 7 (6 dof + 1 gripper)
         self.prev_action = np.zeros(7, dtype=np.float32) 
-        self.step_counter = 0
+        self.prev_action_smooth = np.zeros(7, dtype=np.float32)
+        
+        # Buffer per smoothing forza
+        self.force_sensor_world_smooth = np.zeros(3, dtype=np.float32)
 
         # RNN Init (LSTM)
         self.rnn_units = 1024 
@@ -42,76 +56,118 @@ class FlexivGearAssemblyPolicy:
         c = torch.zeros((2, 1, self.rnn_units), device=self.device)
         self.rnn_states = (h, c)
 
-    def compute_action(self, current_ee_pos, current_ee_quat, current_force):
+        self.step_counter = 0
+
+    def rotate_force_to_world(self, force_body, quat_xyzw):
+        """Ruota la forza dal frame sensore (Body) al frame World"""
+        # Se il sensore ti da già forza in World Frame, puoi saltare questo.
+        # Ma solitamente i sensori F/T sono montati sulla flangia.
+        r = R.from_quat(quat_xyzw)
+        force_world = r.apply(force_body)
+        return force_world
+
+    def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw):
         """
-        Processa le osservazioni e ritorna l'azione raw normalizzata.
         Args:
-            current_ee_pos: [x, y, z] (World Frame)
+            current_ee_pos: [x, y, z]
             current_ee_quat: [w, x, y, z] (Isaac Order)
-            current_force: [fx, fy, fz] (World Frame)
-        Returns:
-            raw_action: np.array(7) - Valori tra -1 e 1
+            current_force_world_raw: [fx, fy, fz] (GIA' IN WORLD FRAME da ROS)
         """
         # 1. Initialization
         if self.prev_ee_pos is None:
             self.prev_ee_pos = current_ee_pos
             self.prev_ee_quat = current_ee_quat
-            return np.zeros(7, dtype=np.float32)
+            # Inizializza il buffer direttamente con il valore raw (senza rotazione)
+            self.force_sensor_world_smooth = current_force_world_raw
+            return np.zeros(6), 0
 
-        # 2. Decimation Check
-        # Nota: Nel real-time loop, chiamiamo questa funzione a ogni ciclo.
-        # Se vogliamo rispettare il decimation, aggiorniamo l'azione solo ogni N step.
-        # Qui assumiamo che il chiamante gestisca il rate (es. 15Hz) o facciamo update sempre.
-        # Per semplicità, eseguiamo sempre l'inferenza assumendo che il nodo ROS giri a ~15-20Hz.
-
-        # 3. Calcolo Velocità (Finite Difference come nel Training)
+        # 2. Compute Input Velocities (Finite Difference)
         lin_vel = (current_ee_pos - self.prev_ee_pos) / self.dt
         
-        # Ang Vel Approx
-        # Ensure continuity
         if np.dot(current_ee_quat, self.prev_ee_quat) < 0:
-            temp_curr_quat = -current_ee_quat
-        else:
-            temp_curr_quat = current_ee_quat
+            current_ee_quat = -current_ee_quat 
             
-        # Semplice diff per ang vel (sufficiente per policy robuste)
-        # Oppure conversione in Axis-Angle diff
-        q_diff = temp_curr_quat - self.prev_ee_quat
-        ang_vel = q_diff[1:] * 2.0 / self.dt # approx parte vettoriale
+        r_curr = R.from_quat([current_ee_quat[1], current_ee_quat[2], current_ee_quat[3], current_ee_quat[0]])
+        r_prev = R.from_quat([self.prev_ee_quat[1], self.prev_ee_quat[2], self.prev_ee_quat[3], self.prev_ee_quat[0]])
+        r_diff = r_curr * r_prev.inv()
+        rot_vec = r_diff.as_rotvec()
+        ang_vel = rot_vec / self.dt
+
+        # 3. FORCE PROCESSING (Solo Smoothing, NIENTE Rotazione)
+        # Il topic ROS ext_wrench_in_world è già orientato correttamente.
+        
+        # Applica Smoothing esponenziale
+        alpha = self.ft_smoothing_factor
+        self.force_sensor_world_smooth = alpha * current_force_world_raw + (1 - alpha) * self.force_sensor_world_smooth
+        
+        current_force_obs = self.force_sensor_world_smooth
 
         # 4. Posizione Relativa
         pos_rel = current_ee_pos - self.fixed_pos
 
-        # 5. Prev Actions Masking 
-        # [CRITICO] Nel training `_get_observations` fa: prev_actions[:, 3:5] = 0.0
-        masked_prev_actions = self.prev_action.copy()
+        # 5. Prev Actions Masking
+        masked_prev_actions = self.prev_action_smooth.copy()
         masked_prev_actions[3:5] = 0.0 
 
-        # 6. Costruzione Osservazione
-        # Ordine da rizon4s_forge_env_cfg.py:
-        # ["fingertip_pos_rel_fixed", "fingertip_quat", "ee_linvel", "ee_angvel", "ft_force", "force_threshold", "prev_actions"]
-        
+        # 6. Build Observation
         obs_vec = np.concatenate([
             pos_rel,            # 3
             current_ee_quat,    # 4 (w,x,y,z)
             lin_vel,            # 3
             ang_vel,            # 3
-            current_force,      # 3
+            current_force_obs,  # 3 (Smoothed & World Frame)
             self.force_threshold, # 1
             masked_prev_actions # 7
         ]).astype(np.float32)
 
-        # 7. Inferenza
+        if DEBUG and (self.step_counter % 100 == 0 or self.step_counter < 3): 
+            obs_dimensions = [3, 4, 3, 3, 3, 1, 7]
+            print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
+            keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
+            vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
+            
+            for key, val in zip(keys, vals):
+                print(f"{key:<15}: {np.array2string(val, precision=4, suppress_small=True)}")
+            print("#####################################################################\n")
+
+        # 7. Inference
         with torch.no_grad():
             obs_t = torch.as_tensor(obs_vec, device=self.device).unsqueeze(0)
             action_t, self.rnn_states = self.model(obs_t, self.rnn_states)
-            # Clip come nel training
             action_t = torch.clamp(action_t, min=-1.0, max=1.0)
             raw_action = action_t.cpu().numpy().flatten()
 
-        # 8. Update State
+        # 8. Post-Processing (EMA Action)
         self.prev_action = raw_action
+        ema = self.ema_factor
+        smooth_action = ema * raw_action + (1 - ema) * self.prev_action_smooth
+        self.prev_action_smooth = smooth_action
+
+        # --- ESTRAZIONE SUCCESS PREDICTION ---
+        # L'indice 6 è la predizione (-1 fallimento, +1 successo)
+        raw_success_pred = smooth_action[6] 
+        # Scaliamo da [-1, 1] a [0, 1]
+        success_score = (raw_success_pred + 1.0) / 2.0
+
+        if DEBUG and (self.step_counter % 100 == 0 or self.step_counter < 3):
+            print(f"🔮 Success Prediction: {raw_success_pred:.2f} -> {success_score:.2f}")
+
+        # 9. FORGE LOGIC: Convert Action to Twist
+        pos_action_delta = smooth_action[0:3] * self.pos_action_bounds
+        rot_action_delta = smooth_action[3:6] * self.rot_action_bounds
+        
+        target_pos_world = self.fixed_pos + pos_action_delta
+        delta_pos = target_pos_world - current_ee_pos
+        delta_pos_clipped = np.clip(delta_pos, -self.pos_threshold, self.pos_threshold)
+        
+        v_lin_cmd = delta_pos_clipped / self.dt
+        
+        delta_rot_clipped = np.clip(rot_action_delta, -self.rot_threshold, self.rot_threshold)
+        v_ang_cmd = delta_rot_clipped / self.dt 
+
         self.prev_ee_pos = current_ee_pos
         self.prev_ee_quat = current_ee_quat
         
-        return raw_action
+        self.step_counter += 1
+        
+        return np.concatenate([v_lin_cmd, v_ang_cmd]), success_score
