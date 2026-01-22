@@ -11,7 +11,8 @@ class FlexivGearAssemblyPolicy:
         self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
         
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
-        self.fixed_pos = np.array([0.61435, 0.03932, 0.07822]) 
+        self.fixed_pos = np.array([0.60438, 0.02618, 0.07856]) 
+        self.fixed_pos[0] += 0.02025  # offset of the bolt
         
         # Soglia usata nel training (Verifica se era 5.0 o 0.014!)
         # Se nel training era 5.0, metti 5.0 qui.
@@ -66,7 +67,7 @@ class FlexivGearAssemblyPolicy:
         force_world = r.apply(force_body)
         return force_world
 
-    def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw):
+    def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw, task_completed=False):
         """
         Args:
             current_ee_pos: [x, y, z]
@@ -120,8 +121,10 @@ class FlexivGearAssemblyPolicy:
             masked_prev_actions # 7
         ]).astype(np.float32)
 
-        if DEBUG and (self.step_counter % 100 == 0 or self.step_counter < 3): 
-            obs_dimensions = [3, 4, 3, 3, 3, 1, 7]
+        # check if the force smoothed changes
+        force_changed = not np.allclose(current_force_obs, self.force_sensor_world_smooth)
+
+        if DEBUG and ((self.step_counter % 100 == 0 or self.step_counter < 3) or force_changed or task_completed): 
             print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
             keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
             vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
@@ -129,6 +132,9 @@ class FlexivGearAssemblyPolicy:
             for key, val in zip(keys, vals):
                 print(f"{key:<15}: {np.array2string(val, precision=4, suppress_small=True)}")
             print("#####################################################################\n")
+
+        if task_completed:
+            return
 
         # 7. Inference
         with torch.no_grad():

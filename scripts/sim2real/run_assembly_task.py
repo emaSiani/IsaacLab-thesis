@@ -26,7 +26,7 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 15.0 
 DEBUG = True
-SUCCESS_THRESHOLD = 0.9
+SUCCESS_THRESHOLD = 0.999
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -172,10 +172,11 @@ class FlexivAssemblyNode(Node):
         # 4. CHECK SUCCESS (STOP CONDITION)
         if success_score > SUCCESS_THRESHOLD:
             print(f"\n🎉 SUCCESS DETECTED! Score: {success_score:.4f} > {SUCCESS_THRESHOLD}")
-            print("🛑 Stopping Robot Commands.")
+            print(f"🛑 Stopping Robot Commands at Step: {self.step_count}")
             self.task_completed = True
             # Opzionale: Mandare un ultimo comando con velocità zero o la posizione corrente per "freezare"
             self.publish_cmd(self.current_q) 
+            self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned, self.task_completed)
             return
 
         self.step_count += 1
@@ -193,7 +194,7 @@ class FlexivAssemblyNode(Node):
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
         
-        max_q_step = 0.15 
+        max_q_step = 0.015
         q_cmd = np.clip(q_cmd, self.current_q - max_q_step, self.current_q + max_q_step)
 
         self.publish_cmd(q_cmd)
