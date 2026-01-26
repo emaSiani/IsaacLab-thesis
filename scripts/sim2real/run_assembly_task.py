@@ -6,6 +6,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import numpy as np
 import os
 import pinocchio as pin
+import matplotlib.pyplot as plt  # Aggiunto per i plot
 
 # Messaggi ROS
 from sensor_msgs.msg import JointState
@@ -26,7 +27,7 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 15.0 
 DEBUG = True
-SUCCESS_THRESHOLD = 0.99
+SUCCESS_THRESHOLD = 0.98
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -49,6 +50,13 @@ class FlexivAssemblyNode(Node):
         self.is_tared = False
 
         self.step_count = 0
+
+        # --- DATA LOGGING ---
+        # Accumulatori per i plot finali
+        self.log_steps = []
+        self.log_actions = []       # Twist [v_lin, v_ang]
+        self.log_forces = []        # Wrench [fx, fy, fz]
+        self.log_scores = []        # Success probability
 
         # --- SETUP PINOCCHIO ---
         if not os.path.exists(URDF_PATH):
@@ -153,6 +161,12 @@ class FlexivAssemblyNode(Node):
         # --- 3. POLICY INFERENCE ---
         target_twist, success_score = self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned)
 
+        # --- LOGGING PER PLOT ---
+        self.log_steps.append(self.step_count)
+        self.log_actions.append(target_twist)      # [vx, vy, vz, wx, wy, wz]
+        self.log_forces.append(wrench_cleaned)     # [fx, fy, fz]
+        self.log_scores.append(success_score)
+
         # --- 4. DEBUG (CON EMOJI) ---
         if DEBUG and (self.step_count % 100 == 0 or self.step_count < 3):
             dist = np.linalg.norm(curr_pos - self.policy.fixed_pos)
@@ -177,7 +191,8 @@ class FlexivAssemblyNode(Node):
             # Opzionale: Mandare un ultimo comando con velocità zero o la posizione corrente per "freezare"
             self.publish_cmd(self.current_q) 
             self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned, self.task_completed)
-            return
+            # Chiusura nodo gestita nel main per permettere il plot
+            raise SystemExit 
 
         self.step_count += 1
 
@@ -209,10 +224,71 @@ class FlexivAssemblyNode(Node):
         traj.points.append(pt)
         self.pub_traj.publish(traj)
 
+    def plot_results(self):
+        """Genera i plot richiesti a fine esecuzione"""
+        if not self.log_steps:
+            print("Nessun dato registrato da plottare.")
+            return
+
+        print("\n📊 Generazione grafici in corso...")
+        
+        steps = np.array(self.log_steps)
+        actions = np.array(self.log_actions) # Shape (N, 6)
+        forces = np.array(self.log_forces)   # Shape (N, 3)
+        scores = np.array(self.log_scores)   # Shape (N,)
+
+        # Creazione figura con 3 subplot
+        fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+        
+        # 1. Andamento Azioni (Twist)
+        # Plot Linear Velocity
+        axs[0].plot(steps, actions[:, 0], label='Vx', linestyle='-', alpha=0.8)
+        axs[0].plot(steps, actions[:, 1], label='Vy', linestyle='-', alpha=0.8)
+        axs[0].plot(steps, actions[:, 2], label='Vz', linestyle='-', alpha=0.8)
+        # Plot Angular Velocity (tratteggiato per distinguere)
+        axs[0].plot(steps, actions[:, 3], label='Wx', linestyle='--', alpha=0.5)
+        axs[0].plot(steps, actions[:, 4], label='Wy', linestyle='--', alpha=0.5)
+        axs[0].plot(steps, actions[:, 5], label='Wz', linestyle='--', alpha=0.5)
+        axs[0].set_ylabel("Action (Twist m/s & rad/s)")
+        axs[0].set_title("1. Andamento delle Azioni (Twist) nel tempo")
+        axs[0].legend(loc='upper right', ncol=2)
+        axs[0].grid(True, alpha=0.3)
+
+        # 2. Andamento Forze
+        axs[1].plot(steps, forces[:, 0], label='Fx', color='r', alpha=0.7)
+        axs[1].plot(steps, forces[:, 1], label='Fy', color='g', alpha=0.7)
+        axs[1].plot(steps, forces[:, 2], label='Fz', color='b', alpha=0.7)
+        axs[1].set_ylabel("Force (N)")
+        axs[1].set_title("2. Andamento delle Forze Misurate (World Frame)")
+        axs[1].legend(loc='upper right')
+        axs[1].grid(True, alpha=0.3)
+
+        # 3. Iterazioni e Successo
+        axs[2].plot(steps, scores, label='Success Score', color='purple', linewidth=2)
+        axs[2].axhline(y=SUCCESS_THRESHOLD, color='k', linestyle='--', label='Threshold')
+        axs[2].set_ylabel("Probability")
+        axs[2].set_xlabel("Steps (Iterations)")
+        axs[2].set_title(f"3. Success Score Evolution (Total Steps: {steps[-1]})")
+        axs[2].legend(loc='lower right')
+        axs[2].grid(True, alpha=0.3)
+        axs[2].set_ylim([-0.1, 1.1])
+
+        plt.tight_layout()
+        plt.show()
+
 def main():
     rclpy.init()
     node = FlexivAssemblyNode()
-    rclpy.spin(node)
+    
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, SystemExit):
+        print("\n🛑 Interruzione rilevata. Chiusura nodo...")
+    finally:
+        # Esegue il plot sia in caso di successo (SystemExit) che di Ctrl+C
+        node.plot_results()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

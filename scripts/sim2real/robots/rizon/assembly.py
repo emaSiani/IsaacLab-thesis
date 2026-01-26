@@ -14,7 +14,7 @@ class FlexivGearAssemblyPolicy:
         self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
         self.fixed_pos[0] += 0.02025  # offset of the bolt
         
-        self.force_threshold = np.array([0.1]) 
+        self.force_threshold = np.array([1.1]) 
 
         # --- MODEL LOAD ---
         self.device = torch.device("cpu")
