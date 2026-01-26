@@ -8,6 +8,8 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
+import numpy as np
+
 #####################################################
 # Configuration classes for Rizon4s Factory tasks.
 # Defines:
@@ -90,6 +92,8 @@ class Rizon4sFactoryTask:
     # Fixed-asset height fraction for which different bonuses are rewarded (see individual tasks).
     success_threshold: float = 0.04
     engage_threshold: float = 0.9
+
+    rot_phase_activation_thresh: float = 0.8
 
 
 @configclass
@@ -300,6 +304,10 @@ class GearMesh(Rizon4sFactoryTask):
     # Fraction of gear peg height.
     success_threshold: float = 0.05
     engage_threshold: float = 0.9
+
+    ee_success_yaw: float = np.pi + np.pi / 4
+    rot_phase_activation_thresh: float = 0.8 # once 80% of envs learnt how to insert, then start to learn how to rotate
+
 
     fixed_asset: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/FixedAsset",

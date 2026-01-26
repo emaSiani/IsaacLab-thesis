@@ -78,7 +78,7 @@ def get_held_base_pose(held_pos, held_quat, task_name, fixed_asset_cfg, num_envs
     return held_base_pos, held_base_quat
 
 
-def get_target_held_base_pose(fixed_pos, fixed_quat, task_name, fixed_asset_cfg, num_envs, device):
+def get_target_held_base_pose(fixed_pos, fixed_quat, task_name, fixed_asset_cfg, num_envs, device, rotation_phase_active = False, target_yaw = 0.0):
     """Get target poses for keypoint and success computation."""
     fixed_success_pos_local = torch.zeros((num_envs, 3), device=device)
     if task_name == "peg_insert":
@@ -87,6 +87,7 @@ def get_target_held_base_pose(fixed_pos, fixed_quat, task_name, fixed_asset_cfg,
         gear_base_offset = fixed_asset_cfg.medium_gear_base_offset
         fixed_success_pos_local[:, 0] = gear_base_offset[0]
         fixed_success_pos_local[:, 2] = gear_base_offset[2]
+        
     elif task_name == "nut_thread":
         head_height = fixed_asset_cfg.base_height
         shank_length = fixed_asset_cfg.height
@@ -99,6 +100,19 @@ def get_target_held_base_pose(fixed_pos, fixed_quat, task_name, fixed_asset_cfg,
     target_held_base_quat, target_held_base_pos = torch_utils.tf_combine(
         fixed_quat, fixed_pos, fixed_success_quat_local, fixed_success_pos_local
     )
+
+    if rotation_phase_active:
+        
+        # Creiamo il quaternione per la rotazione aggiuntiva su Z (Yaw)
+        zeros = torch.zeros(num_envs, device=device)
+        yaws = torch.full((num_envs,), target_yaw, device=device)
+
+        # Quaternione di rotazione locale (Roll=0, Pitch=0, Yaw=Target)
+        rot_offset_quat = torch_utils.quat_from_euler_xyz(zeros, zeros, yaws)
+
+        # Moltiplichiamo: Nuovo_Target = Vecchio_Target * Rotazione_Offset
+        target_held_base_quat = torch_utils.quat_mul(target_held_base_quat, rot_offset_quat)
+        
     return target_held_base_pos, target_held_base_quat
 
 
