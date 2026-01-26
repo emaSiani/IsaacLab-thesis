@@ -27,7 +27,9 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 15.0 
 DEBUG = True
-SUCCESS_THRESHOLD = 0.98
+SUCCESS_THRESHOLD = 0.9995
+#SUCCESS_THRESHOLD = 0.98
+serial_number= None
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -36,7 +38,10 @@ class FlexivAssemblyNode(Node):
         self.task_completed = False
         
         self.dt = 1.0 / CONTROL_FREQ
-        self.joint_names_ordered = [f"joint{i}" for i in range(1, 8)]
+        if serial_number is None:
+            self.joint_names_ordered = [f"joint{i}" for i in range(1, 8)]
+        else:
+            self.joint_names_ordered = [f"{serial_number}_joint{i}" for i in range(1, 8)]
 
         # Variabili Stato
         self.robot_state = None      
@@ -79,7 +84,10 @@ class FlexivAssemblyNode(Node):
             self.sub_states = self.create_subscription(RobotStates, "/flexiv_robot_states", self.cb_states, qos_profile)
         
         # Sottoscrizione Wrench diretto (Backup per Sim)
-        self.sub_wrench = self.create_subscription(WrenchStamped, "/sn/external_wrench_in_world", self.cb_wrench_direct, qos_profile)
+        # if serial_number is None:
+        #     self.sub_wrench = self.create_subscription(WrenchStamped, "/sn/external_wrench_in_world", self.cb_wrench_direct, qos_profile)
+        # else:
+        #     self.sub_wrench = self.create_subscription(WrenchStamped, f"/{serial_number}/external_wrench_in_world", self.cb_wrench_direct, qos_profile)
         self.last_wrench_msg = None
 
         self.pub_traj = self.create_publisher(JointTrajectory, "/rizon_arm_controller/joint_trajectory", 1)

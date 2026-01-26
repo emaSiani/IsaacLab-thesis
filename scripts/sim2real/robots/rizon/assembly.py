@@ -8,7 +8,8 @@ DEBUG = True
 class FlexivGearAssemblyPolicy:
     def __init__(self):
         # --- PATH CONFIG ---
-        self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
+        #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
+        self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_fixed_midpoint_policy.pt"
         
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
         self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
