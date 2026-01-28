@@ -28,8 +28,8 @@ URDF_PATH = "robots/rizon4s_kinematics.urdf"
 CONTROL_FREQ = 60.0 
 DEBUG = True
 SUCCESS_THRESHOLD = 0.93
-#SUCCESS_THRESHOLD = 0.98
-serial_number= 'Rizon4s-063126'
+# SUCCESS_THRESHOLD = 0.98
+serial_number = None
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -77,9 +77,11 @@ class FlexivAssemblyNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
-
-        #self.sub_joints = self.create_subscription(JointState, "/joint_states", self.cb_joints, qos_profile)
-        self.sub_joints = self.create_subscription(JointState, "flexiv_arm/joint_states", self.cb_joints, qos_profile)
+        if serial_number is None:
+            self.sub_joints = self.create_subscription(JointState, "/joint_states", self.cb_joints, qos_profile)
+        
+        else:
+            self.sub_joints = self.create_subscription(JointState, "flexiv_arm/joint_states", self.cb_joints, qos_profile)
 
         if FLEXIV_IMPORTED and serial_number is None:
                 self.sub_states = self.create_subscription(RobotStates, "/flexiv_robot_states", self.cb_states, qos_profile)
