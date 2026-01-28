@@ -10,10 +10,6 @@ SIMULATION = False
 # deg: [-7,44, -32,7, 24,17, 102,3, -18,16, 40,4, 0.0]  
 
 
-# INITIAL ROBOT POSE
-# deg: [-7,44, -32,7, 24,17, 102,3, -18,16, 40,4, 0.0]  
-
-
 class FlexivGearAssemblyPolicy:
     def __init__(self):
         # --- PATH CONFIG ---
@@ -21,12 +17,6 @@ class FlexivGearAssemblyPolicy:
         self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_fixed_midpoint_policy.pt"
 
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
-<<<<<<< HEAD
-        self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
-        self.fixed_pos[0] += 0.02025  # offset of the bolt
-
-        self.force_threshold = np.array([1.1]) 
-=======
         if SIMULATION: 
             self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
         else:
@@ -36,7 +26,6 @@ class FlexivGearAssemblyPolicy:
         #self.fixed_pos[0] += 0.02025  # offset of the bolt
 
         self.force_threshold = np.array([0.5]) 
->>>>>>> 0abd9770 (28/01/26 - Deployed in REAL)
 
         # --- MODEL LOAD ---
         self.device = torch.device("cpu")

@@ -238,6 +238,12 @@ class FlexivAssemblyNode(Node):
         J_T = J.T
         J_pinv = J_T @ np.linalg.inv(J @ J_T + dls_lambda**2 * np.eye(6))
 
+        # [NEW] IK Correction for TCP Offset: V_flange = V_tcp - (omega x r)
+        if serial_number is not None and M_world_flange is not None:
+            r_world = M_world_flange.rotation @ np.array([0., 0., self.tcp_offset_z])
+            # V_lin_flange = V_lin_tcp - cross(omega, r)
+            target_twist[0:3] -= np.cross(target_twist[3:6], r_world)
+
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
 
