@@ -73,9 +73,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         self._init_tensors()
         self._set_default_dynamics_parameters()
 
-        self.is_rotation_phase_active = False
-        self.rot_activation_threshold = cfg.task.rot_phase_activation_thresh
-
     def _set_default_dynamics_parameters(self):
         """Set parameters defining dynamic interactions."""
         self.default_gains = torch.tensor(self.cfg.ctrl.default_task_prop_gains, device=self.device).repeat(
@@ -398,8 +395,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             self.cfg_task.fixed_asset_cfg,
             self.num_envs,
             self.device,
-            self.is_rotation_phase_active,
-            self.cfg_task.ee_success_yaw
         )
 
         xy_dist = torch.linalg.vector_norm(target_held_base_pos[:, 0:2] - held_base_pos[:, 0:2], dim=1)
@@ -419,24 +414,10 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         )
         curr_successes = torch.logical_and(is_centered, is_close_or_below)
 
-        if not self.is_rotation_phase_active:
-            # Check if we need to activate rotation phase
-            success_rate = torch.count_nonzero(curr_successes).item() / self.num_envs
-            if success_rate >= self.rot_activation_threshold:
-                carb.log_info(
-                    f"Rizon4sFactoryEnv: Activating rotation phase for task {self.cfg_task.name} at success rate {success_rate:.2f}"
-                )
-                self.is_rotation_phase_active = True
-
-        if check_rot and self.is_rotation_phase_active:
-            # Ottieni Yaw attuale
+        if check_rot:
             _, _, curr_yaw = torch_utils.get_euler_xyz(self.fingertip_midpoint_quat)
-            # Normalizza in [-pi, pi] per sicurezza
             curr_yaw = rizon4s_factory_utils.wrap_yaw(curr_yaw)
-            target_yaw = self.cfg_task.ee_success_yaw
-            rot_error = torch.abs(curr_yaw - target_yaw)
-            rot_tolerance = np.pi * (1.0 - success_threshold)  # Tolleranza decrescente con successo
-            is_rotated = rot_error < rot_tolerance
+            is_rotated = curr_yaw < self.cfg_task.ee_success_yaw
             curr_successes = torch.logical_and(curr_successes, is_rotated)
 
         return curr_successes
@@ -465,7 +446,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
     def _get_rewards(self):
         """Update rewards and compute success statistics."""
         # Get successful and failed envs at current timestep
-        check_rot = self.cfg_task.name == "nut_thread" or self.cfg_task.name == "gear_mesh"
+        check_rot = self.cfg_task.name == "nut_thread"
         curr_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
@@ -496,8 +477,6 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             self.cfg_task.fixed_asset_cfg,
             self.num_envs,
             self.device,
-            self.is_rotation_phase_active,
-            self.cfg_task.ee_success_yaw
         )
 
         # --- INIZIO CODICE DEBUG (v8 - Orientamento) ---
@@ -506,16 +485,17 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         all_marker_locations_local = torch.cat([target_held_base_pos, held_base_pos], dim=0)
         all_marker_locations_world = all_marker_locations_local + self.scene.env_origins.repeat(2, 1)
 
-        # 2. Concatena TUTTI gli orientamenti 
+        # 2. Concatena TUTTI gli orientamenti
         all_marker_orientations = torch.cat([target_held_base_quat, held_base_quat], dim=0)
 
+        # 3. Visualizza tutto in una sola chiamata
         self.debug_markers.visualize(
             translations=all_marker_locations_world,
-            orientations=all_marker_orientations,
+            orientations=all_marker_orientations,  # <-- Aggiungi questo
             marker_indices=self.all_marker_indices
         )
         
-        # --- FINE CODICE DEBUG ---
+        # --- FINE CODICE DEBUG (v8 - Orientamento) ---
 
         keypoints_held = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         keypoints_fixed = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
@@ -542,10 +522,10 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         # Action penalties.
         action_penalty_ee = torch.norm(self.actions, p=2)
         action_grad_penalty = torch.norm(self.actions - self.prev_actions, p=2, dim=-1)
-        curr_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=self.cfg_task.name=="nut_thread" or self.cfg_task.name=="gear_mesh")
+        curr_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
 
         rew_dict = {
-            "kp_baseline": rizon4s_factory_utils.squashing_fn(keypoint_dist, a0, b0),   
+            "kp_baseline": rizon4s_factory_utils.squashing_fn(keypoint_dist, a0, b0),
             "kp_coarse": rizon4s_factory_utils.squashing_fn(keypoint_dist, a1, b1),
             "kp_fine": rizon4s_factory_utils.squashing_fn(keypoint_dist, a2, b2),
             "action_penalty_ee": action_penalty_ee,
