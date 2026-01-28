@@ -69,7 +69,8 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
 
     # Default joint position, task gains, and rot deriv scale used during reset.
-    reset_joints = [-0.13, -0.5707, 0.422, 1.7854, -0.317, 0.705, 0.0]
+    # reset_joints = [-0.13, -0.5707, 0.422, 1.7854, -0.317, 0.705, 0.0]
+    reset_joints = [0.0, -0.698132, 0.0, 1.5708, 0.0, 0.698132, 0.0]
 
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
