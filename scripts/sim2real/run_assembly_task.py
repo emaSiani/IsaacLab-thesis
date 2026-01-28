@@ -6,7 +6,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import numpy as np
 import os
 import pinocchio as pin
-import matplotlib.pyplot as plt  # Aggiunto per i plot
+import matplotlib.pyplot as plt # [NEW] Plotting
 
 # Messaggi ROS
 from sensor_msgs.msg import JointState
@@ -27,7 +27,7 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 60.0 
 DEBUG = True
-SUCCESS_THRESHOLD = 0.9995
+SUCCESS_THRESHOLD = 0.93
 #SUCCESS_THRESHOLD = 0.98
 serial_number= 'Rizon4s-063126'
 
@@ -56,12 +56,12 @@ class FlexivAssemblyNode(Node):
 
         self.step_count = 0
 
-        # --- DATA LOGGING ---
-        # Accumulatori per i plot finali
+        # [NEW] Data Logging
         self.log_steps = []
-        self.log_actions = []       # Twist [v_lin, v_ang]
-        self.log_forces = []        # Wrench [fx, fy, fz]
-        self.log_scores = []        # Success probability
+        self.log_actions = []
+        self.log_forces = []
+        self.log_scores = []
+        self.tcp_offset_z = -0.19909 # [m] Offset TCP vs Flange
 
         # --- SETUP PINOCCHIO ---
         if not os.path.exists(URDF_PATH):
@@ -161,6 +161,21 @@ class FlexivAssemblyNode(Node):
             if self.step_count % 30 == 0: self.get_logger().warn("Waiting for Pose/Joints...")
             return
 
+        # [NEW] Apply TCP Offset Logic (Flange -> TCP)
+        # Calcolo le variabili per l'IK Correction prima di sovrascrivere curr_quat
+        M_world_flange = None
+        if serial_number is not None:
+            # Ricostruisco la trasformata della flangia
+            rot_mat = pin.Quaternion(curr_quat[0], curr_quat[1], curr_quat[2], curr_quat[3]).toRotationMatrix()
+            M_world_flange = pin.SE3(rot_mat, curr_pos)
+            # Trasformata Flange -> TCP
+            M_flange_tcp = pin.SE3(np.eye(3), np.array([0.0, 0.0, self.tcp_offset_z]))
+            M_world_tcp = M_world_flange * M_flange_tcp
+            # Sovrascrivo le variabili per la policy
+            curr_pos = M_world_tcp.translation
+            quat_pin = pin.Quaternion(M_world_tcp.rotation)
+            curr_quat = np.array([quat_pin.w, quat_pin.x, quat_pin.y, quat_pin.z])
+
         # --- 2. TARE PROCEDURE (AZZERAMENTO) ---
         if not self.is_tared:
             self.wrench_bias += curr_wrench
@@ -178,10 +193,10 @@ class FlexivAssemblyNode(Node):
         # --- 3. POLICY INFERENCE ---
         target_twist, success_score = self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned)
 
-        # --- LOGGING PER PLOT ---
+        # [NEW] Logging
         self.log_steps.append(self.step_count)
-        self.log_actions.append(target_twist)      # [vx, vy, vz, wx, wy, wz]
-        self.log_forces.append(wrench_cleaned)     # [fx, fy, fz]
+        self.log_actions.append(target_twist)
+        self.log_forces.append(wrench_cleaned)
         self.log_scores.append(success_score)
 
         # --- 4. DEBUG (CON EMOJI) ---
@@ -241,6 +256,7 @@ class FlexivAssemblyNode(Node):
         traj.points.append(pt)
         self.pub_traj.publish(traj)
 
+    # [NEW] Plotting function
     def plot_results(self):
         """Genera i plot richiesti a fine esecuzione"""
         if not self.log_steps:
@@ -300,12 +316,12 @@ def main():
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 Interruzione rilevata. Chiusura nodo...")
+        print("\n🛑 Interruzione rilevata.")
     finally:
-        # Esegue il plot sia in caso di successo (SystemExit) che di Ctrl+C
-        node.plot_results()
+        node.plot_results() # [NEW] Plot on exit
         node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
+ 
