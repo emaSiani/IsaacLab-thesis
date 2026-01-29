@@ -7,7 +7,7 @@ DEBUG = True
 SIMULATION = True
 
 # INITIAL ROBOT POSE
-# deg: [-7,44, -32,7, 24,17, 102,3, -18,16, 40,4, 0.0]  
+# deg: [-28.93, -46.23, 53.94, 92.87, -41.05, 27.338, -174-99]  
 
 
 class FlexivGearAssemblyPolicy:
@@ -16,14 +16,7 @@ class FlexivGearAssemblyPolicy:
         #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
         self.policy_path = r"robots/rizon/policies/policy.pt"
 
-        # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
-        if SIMULATION: 
-            self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
-        else:
-            self.fixed_pos = np.array([0.62935, 0.03585, 0.0782]) 
-            # self.fixed_pos[0] -= 0.0048
-            # self.fixed_pos[0] += 0.0176
-
+        self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
         self.force_threshold = np.array([5.74]) 
 
         # --- MODEL LOAD ---
