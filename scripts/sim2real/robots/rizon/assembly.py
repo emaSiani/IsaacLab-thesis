@@ -14,17 +14,15 @@ class FlexivGearAssemblyPolicy:
     def __init__(self):
         # --- PATH CONFIG ---
         #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
-        self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_fixed_midpoint_policy.pt"
+        self.policy_path = r"robots/rizon/policies/policy.pt"
 
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
         if SIMULATION: 
-            self.fixed_pos = np.array([0.646, 0.0258, 0.1161]) 
+            self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
         else:
             self.fixed_pos = np.array([0.62935, 0.03585, 0.0782]) 
             # self.fixed_pos[0] -= 0.0048
             # self.fixed_pos[0] += 0.0176
-        # self.fixed_pos[0] -= 0.02025  # offset of the bolt
-        #self.fixed_pos[2] += 0.0165
 
         self.force_threshold = np.array([5.74]) 
 
@@ -89,12 +87,27 @@ class FlexivGearAssemblyPolicy:
         current_ee_quat[3] = 0.0
         # current_ee_quat = np.array([0, -current_ee_quat[2], current_ee_quat[1], 0])
 
-        # 1. Initialization
         if self.prev_ee_pos is None:
             self.prev_ee_pos = current_ee_pos
             self.prev_ee_quat = current_ee_quat
-            # Inizializza il buffer direttamente con il valore raw (senza rotazione)
             self.force_sensor_world_smooth = current_force_world_raw
+            
+            # --- [FIX CRITICO] INIZIALIZZAZIONE PREV ACTIONS ---
+            # Calcoliamo pos_rel iniziale
+            pos_rel_start = current_ee_pos - self.fixed_pos
+            
+            # Normalizziamo come nel training (diviso per i bounds)
+            # Questo "inganna" la rete facendole credere che l'azione precedente ci ha portato qui
+            init_action = np.zeros(7, dtype=np.float32)
+            init_action[0:3] = pos_rel_start / self.pos_action_bounds
+            
+            # Inizializziamo anche la predizione di successo a -1 (come in training)
+            init_action[6] = -1.0
+            
+            self.prev_action_smooth = init_action
+            self.prev_action = init_action
+            # ---------------------------------------------------
+
             return np.zeros(6), 0
 
         # 2. Compute Input Velocities (Finite Difference)
