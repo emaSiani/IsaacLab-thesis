@@ -28,7 +28,7 @@ URDF_PATH = "robots/rizon4s_kinematics.urdf"
 CONTROL_FREQ = 60.0 
 DEBUG = True
 SUCCESS_THRESHOLD = 0.93
-# SUCCESS_THRESHOLD = 0.98
+# SUCCESS_THRESHOLD = 100
 serial_number = None
 
 class FlexivAssemblyNode(Node):
@@ -249,7 +249,7 @@ class FlexivAssemblyNode(Node):
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
 
-        max_q_step = 0.0075
+        max_q_step = 0.0005
         q_cmd = np.clip(q_cmd, self.current_q - max_q_step, self.current_q + max_q_step)
 
         self.publish_cmd(q_cmd)

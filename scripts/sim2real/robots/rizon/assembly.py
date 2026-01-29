@@ -4,7 +4,7 @@ import torch
 from scipy.spatial.transform import Rotation as R
 
 DEBUG = True
-SIMULATION = False
+SIMULATION = True
 
 # INITIAL ROBOT POSE
 # deg: [-7,44, -32,7, 24,17, 102,3, -18,16, 40,4, 0.0]  
@@ -18,14 +18,15 @@ class FlexivGearAssemblyPolicy:
 
         # [CRITICAL] Posizione del FIXED ASSET (Bullone) nel frame del robot reale.
         if SIMULATION: 
-            self.fixed_pos = np.array([0.6047, 0.02619, 0.0782]) 
+            self.fixed_pos = np.array([0.646, 0.0258, 0.1161]) 
         else:
             self.fixed_pos = np.array([0.62935, 0.03585, 0.0782]) 
             # self.fixed_pos[0] -= 0.0048
             # self.fixed_pos[0] += 0.0176
-        #self.fixed_pos[0] += 0.02025  # offset of the bolt
+        # self.fixed_pos[0] -= 0.02025  # offset of the bolt
+        #self.fixed_pos[2] += 0.0165
 
-        self.force_threshold = np.array([0.5]) 
+        self.force_threshold = np.array([5.74]) 
 
         # --- MODEL LOAD ---
         self.device = torch.device("cpu")
@@ -83,6 +84,11 @@ class FlexivGearAssemblyPolicy:
             current_ee_quat: [w, x, y, z] (Isaac Order)
             current_force_world_raw: [fx, fy, fz] (GIA' IN WORLD FRAME da ROS)
         """
+        #current_ee_quat *= -1
+        current_ee_quat[0] = 0.0
+        current_ee_quat[3] = 0.0
+        # current_ee_quat = np.array([0, -current_ee_quat[2], current_ee_quat[1], 0])
+
         # 1. Initialization
         if self.prev_ee_pos is None:
             self.prev_ee_pos = current_ee_pos
