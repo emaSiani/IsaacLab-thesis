@@ -16,7 +16,7 @@ class SimAdapter(Node):
         # CONFIG
         self.SN = "" # MATCH YOUR SN
         self.BASE_LINK = "base_link" # Make sure this matches your USD/URDF base name
-        self.TCP_LINK = "fingertip_midpoint"
+        self.TCP_LINK = "flange"
         
         # 1. Pubs/Subs
         self.pub_states = self.create_publisher(RobotStates, f"/{self.SN}/flexiv_robot_states", 10) if self.SN else self.create_publisher(RobotStates, "/flexiv_robot_states", 10)

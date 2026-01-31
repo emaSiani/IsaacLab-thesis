@@ -28,7 +28,7 @@ URDF_PATH = "robots/rizon4s_kinematics.urdf"
 CONTROL_FREQ = 15.0 
 DEBUG = True
 # SUCCESS_THRESHOLD = 0.93
-SUCCESS_THRESHOLD = 0.98
+SUCCESS_THRESHOLD = 0.96
 serial_number = None
 
 class FlexivAssemblyNode(Node):
@@ -61,7 +61,7 @@ class FlexivAssemblyNode(Node):
         self.log_actions = []
         self.log_forces = []
         self.log_scores = []
-        self.tcp_offset_z = -0.19909 # [m] Offset TCP vs Flange
+        self.tcp_offset_z = 0.19909 # [m] Offset TCP vs Flange
 
         # --- SETUP PINOCCHIO ---
         if not os.path.exists(URDF_PATH):
@@ -166,17 +166,16 @@ class FlexivAssemblyNode(Node):
         # [NEW] Apply TCP Offset Logic (Flange -> TCP)
         # Calcolo le variabili per l'IK Correction prima di sovrascrivere curr_quat
         M_world_flange = None
-        if serial_number is not None:
-            # Ricostruisco la trasformata della flangia
-            rot_mat = pin.Quaternion(curr_quat[0], curr_quat[1], curr_quat[2], curr_quat[3]).toRotationMatrix()
-            M_world_flange = pin.SE3(rot_mat, curr_pos)
-            # Trasformata Flange -> TCP
-            M_flange_tcp = pin.SE3(np.eye(3), np.array([0.0, 0.0, self.tcp_offset_z]))
-            M_world_tcp = M_world_flange * M_flange_tcp
-            # Sovrascrivo le variabili per la policy
-            curr_pos = M_world_tcp.translation
-            quat_pin = pin.Quaternion(M_world_tcp.rotation)
-            curr_quat = np.array([quat_pin.w, quat_pin.x, quat_pin.y, quat_pin.z])
+        # Ricostruisco la trasformata della flangia
+        rot_mat = pin.Quaternion(curr_quat[0], curr_quat[1], curr_quat[2], curr_quat[3]).toRotationMatrix()
+        M_world_flange = pin.SE3(rot_mat, curr_pos)
+        # Trasformata Flange -> TCP
+        M_flange_tcp = pin.SE3(np.eye(3), np.array([0.0, 0.0, self.tcp_offset_z]))
+        M_world_tcp = M_world_flange * M_flange_tcp
+        # Sovrascrivo le variabili per la policy
+        curr_pos = M_world_tcp.translation
+        quat_pin = pin.Quaternion(M_world_tcp.rotation)
+        curr_quat = np.array([quat_pin.w, quat_pin.x, quat_pin.y, quat_pin.z])
 
         # --- 2. TARE PROCEDURE (AZZERAMENTO) ---
         if not self.is_tared:
@@ -241,11 +240,10 @@ class FlexivAssemblyNode(Node):
         J_pinv = J_T @ np.linalg.inv(J @ J_T + dls_lambda**2 * np.eye(6))
 
         # [NEW] IK Correction for TCP Offset: V_flange = V_tcp - (omega x r)
-        if serial_number is not None and M_world_flange is not None:
-            r_world = M_world_flange.rotation @ np.array([0., 0., self.tcp_offset_z])
-            # V_lin_flange = V_lin_tcp - cross(omega, r)
-            target_twist[0:3] -= np.cross(target_twist[3:6], r_world)
-
+        # if serial_number is None and M_world_flange is not None:
+        #     r_world = M_world_flange.rotation @ np.array([0., 0., self.tcp_offset_z])
+        #     # V_lin_flange = V_lin_tcp - cross(omega, r)
+        #     target_twist[3:6] += np.cross(target_twist[3:6], r_world)
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
 
