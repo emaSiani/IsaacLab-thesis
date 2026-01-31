@@ -7,7 +7,7 @@ DEBUG = True
 SIMULATION = True
 
 # INITIAL ROBOT POSE
-# deg: [-28.93, -46.23, 53.94, 92.87, -41.05, 27.338, -174-99]  
+# deg: [-27.46, -45.05, 52.05, 92.91, -39.24, 28.07, -150.73]  
 
 
 class FlexivGearAssemblyPolicy:
