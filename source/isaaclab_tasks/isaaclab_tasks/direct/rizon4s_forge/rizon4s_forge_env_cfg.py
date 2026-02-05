@@ -20,8 +20,10 @@ STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
 
 @configclass
 class ForgeCtrlCfg(CtrlCfg):
-    ema_factor_range = [0.0125, 0.05]
+    ema_factor_range = [0.025, 0.1]
     default_task_prop_gains = [565.0, 565.0, 565.0, 28.0, 28.0, 28.0]
+    # 50% reduction
+    # default_task_prop_gains = [282.5, 282.5, 282.5, 14.0, 14.0, 14.0]
     task_prop_gains_noise_level = [0.41, 0.41, 0.41, 0.41, 0.41, 0.41]
     pos_threshold_noise_level = [0.25, 0.25, 0.25]
     rot_threshold_noise_level = [0.29, 0.29, 0.29]

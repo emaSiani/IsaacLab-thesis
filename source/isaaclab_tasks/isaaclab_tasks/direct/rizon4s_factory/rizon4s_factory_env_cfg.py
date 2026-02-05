@@ -83,7 +83,7 @@ class CtrlCfg:
 
 @configclass
 class Rizon4sFactoryEnvCfg(DirectRLEnvCfg):
-    decimation = 4
+    decimation = 8
     action_space = 6
     # num_*: will be overwritten to correspond to obs_order, state_order.
     observation_space = 21
