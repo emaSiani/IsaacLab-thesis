@@ -25,11 +25,11 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 
 # --- CONFIGURAZIONE ---
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
-CONTROL_FREQ = 15.0 
+CONTROL_FREQ = 60.0 
 DEBUG = True
 # SUCCESS_THRESHOLD = 0.93
-SUCCESS_THRESHOLD = 0.96
-serial_number = None
+SUCCESS_THRESHOLD = 0.995
+serial_number = "Rizon4s-063126"
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -79,7 +79,7 @@ class FlexivAssemblyNode(Node):
         )
         if serial_number is None:
             self.sub_joints = self.create_subscription(JointState, "/joint_states", self.cb_joints, qos_profile)
-        
+
         else:
             self.sub_joints = self.create_subscription(JointState, "flexiv_arm/joint_states", self.cb_joints, qos_profile)
 
@@ -136,9 +136,9 @@ class FlexivAssemblyNode(Node):
             pose_available = True
             wrench_available = True
             curr_pos = np.array([
-                self.robot_state.tcp_pose.pose.position.x,
-                self.robot_state.tcp_pose.pose.position.y,
-                self.robot_state.tcp_pose.pose.position.z
+                self.robot_state.flange_pose.pose.position.x,
+                self.robot_state.flange_pose.pose.position.y,
+                self.robot_state.flange_pose.pose.position.z
             ])
             q_msg = self.robot_state.tcp_pose.pose.orientation
             curr_quat = np.array([q_msg.w, q_msg.x, q_msg.y, q_msg.z])
@@ -238,12 +238,6 @@ class FlexivAssemblyNode(Node):
         dls_lambda = 0.05
         J_T = J.T
         J_pinv = J_T @ np.linalg.inv(J @ J_T + dls_lambda**2 * np.eye(6))
-
-        # [NEW] IK Correction for TCP Offset: V_flange = V_tcp - (omega x r)
-        # if serial_number is None and M_world_flange is not None:
-        #     r_world = M_world_flange.rotation @ np.array([0., 0., self.tcp_offset_z])
-        #     # V_lin_flange = V_lin_tcp - cross(omega, r)
-        #     target_twist[3:6] += np.cross(target_twist[3:6], r_world)
         q_dot = J_pinv @ target_twist
         q_cmd = self.current_q + q_dot * self.dt
 
