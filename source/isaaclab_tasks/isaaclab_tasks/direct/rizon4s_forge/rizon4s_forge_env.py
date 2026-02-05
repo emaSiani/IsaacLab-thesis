@@ -258,7 +258,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         contact_force = torch.norm(self.force_sensor_smooth[:, 0:3], p=2, dim=-1, keepdim=False)
         contact_penalty = torch.nn.functional.relu(contact_force - self.contact_penalty_thresholds)
         # Add success prediction rewards.
-        check_rot = self.cfg_task.name == "nut_thread"
+        check_rot = self.cfg_task.name in ["nut_thread", "gear_mesh"]
         true_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
