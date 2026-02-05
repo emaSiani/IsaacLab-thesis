@@ -68,7 +68,7 @@ class FlexivGearAssemblyPolicy:
         force_world = r.apply(force_body)
         return force_world
 
-    def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw, task_completed=False):
+    def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw):
         """
         Args:
             current_ee_pos: [x, y, z]
@@ -142,10 +142,8 @@ class FlexivGearAssemblyPolicy:
             masked_prev_actions # 7
         ]).astype(np.float32)
 
-        # check if the force smoothed changes
-        force_changed = not np.allclose(current_force_obs, self.force_sensor_world_smooth)
-
-        if DEBUG and ((self.step_counter % 100 == 0 or self.step_counter < 3) or force_changed or task_completed): 
+        if DEBUG and (self.step_counter % 100 == 0 or self.step_counter < 3): 
+            obs_dimensions = [3, 4, 3, 3, 3, 1, 7]
             print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
             keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
             vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
@@ -153,9 +151,6 @@ class FlexivGearAssemblyPolicy:
             for key, val in zip(keys, vals):
                 print(f"{key:<15}: {np.array2string(val, precision=4, suppress_small=True)}")
             print("#####################################################################\n")
-
-        if task_completed:
-            return
 
         # 7. Inference
         with torch.no_grad():

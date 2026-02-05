@@ -219,7 +219,7 @@ class FlexivAssemblyNode(Node):
         # 4. CHECK SUCCESS (STOP CONDITION)
         if success_score > SUCCESS_THRESHOLD:
             print(f"\n🎉 SUCCESS DETECTED! Score: {success_score:.4f} > {SUCCESS_THRESHOLD}")
-            print(f"🛑 Stopping Robot Commands at Step: {self.step_count}")
+            print("🛑 Stopping Robot Commands.")
             self.task_completed = True
             # Opzionale: Mandare un ultimo comando con velocità zero o la posizione corrente per "freezare"
             self.publish_cmd(self.current_q) 
