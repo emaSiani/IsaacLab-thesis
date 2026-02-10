@@ -77,9 +77,9 @@ class SimAdapter(Node):
         try:
             t = self.tf_buffer.lookup_transform(self.BASE_LINK, self.TCP_LINK, rclpy.time.Time())
             
-            msg.tcp_pose.pose.position.x = t.transform.translation.x
-            msg.tcp_pose.pose.position.y = t.transform.translation.y
-            msg.tcp_pose.pose.position.z = t.transform.translation.z
+            msg.flange_pose.pose.position.x = t.transform.translation.x
+            msg.flange_pose.pose.position.y = t.transform.translation.y
+            msg.flange_pose.pose.position.z = t.transform.translation.z
             msg.tcp_pose.pose.orientation = t.transform.rotation
         except Exception as e:
             # Uncomment to debug if frames are missing

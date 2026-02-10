@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 DEBUG = True
 SIMULATION = True
+ROTATION = False
 
 # INITIAL ROBOT POSE
 # deg: [-27.46, -45.05, 52.05, 92.91, -39.24, 28.07, -150.73]  
@@ -14,9 +15,13 @@ class FlexivGearAssemblyPolicy:
     def __init__(self):
         # --- PATH CONFIG ---
         #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
-        self.policy_path = r"robots/rizon/policies/policy.pt"
+        if not ROTATION:
+            self.policy_path = r"robots/rizon/policies/policy.pt"
+        else:
+            self.policy_path = r"robots/rizon/policies/rotation_policy.pt"
 
         self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+        self.target_yaw =  np.pi / 6
         self.force_threshold = np.array([5.74]) 
 
         # --- MODEL LOAD ---
@@ -75,26 +80,19 @@ class FlexivGearAssemblyPolicy:
             current_ee_quat: [w, x, y, z] (Isaac Order)
             current_force_world_raw: [fx, fy, fz] (GIA' IN WORLD FRAME da ROS)
         """
-        #current_ee_quat *= -1
         current_ee_quat[0] = 0.0
         current_ee_quat[3] = 0.0
-        # current_ee_quat = np.array([0, -current_ee_quat[2], current_ee_quat[1], 0])
 
         if self.prev_ee_pos is None:
             self.prev_ee_pos = current_ee_pos
             self.prev_ee_quat = current_ee_quat
             self.force_sensor_world_smooth = current_force_world_raw
             
-            # --- [FIX CRITICO] INIZIALIZZAZIONE PREV ACTIONS ---
-            # Calcoliamo pos_rel iniziale
             pos_rel_start = current_ee_pos - self.fixed_pos
             
-            # Normalizziamo come nel training (diviso per i bounds)
-            # Questo "inganna" la rete facendole credere che l'azione precedente ci ha portato qui
             init_action = np.zeros(7, dtype=np.float32)
             init_action[0:3] = pos_rel_start / self.pos_action_bounds
             
-            # Inizializziamo anche la predizione di successo a -1 (come in training)
             init_action[6] = -1.0
             
             self.prev_action_smooth = init_action
@@ -132,15 +130,29 @@ class FlexivGearAssemblyPolicy:
         masked_prev_actions[3:5] = 0.0 
 
         # 6. Build Observation
-        obs_vec = np.concatenate([
+        common_obs = np.concatenate([
             pos_rel,            # 3
             current_ee_quat,    # 4 (w,x,y,z)
             lin_vel,            # 3
             ang_vel,            # 3
             current_force_obs,  # 3 (Smoothed & World Frame)
             self.force_threshold, # 1
-            masked_prev_actions # 7
         ]).astype(np.float32)
+
+        if ROTATION:
+            current_yaw = r_curr.as_euler('zyx')[0] 
+            target_yaw_error = self.target_yaw - current_yaw
+            target_yaw_error = (target_yaw_error + np.pi) % (2 * np.pi) - np.pi
+            common_obs = np.concatenate([
+                common_obs, 
+                np.array([target_yaw_error], dtype=np.float32)
+            ])
+
+        obs_vec = np.concatenate([
+            common_obs, 
+            masked_prev_actions
+        ]).astype(np.float32)
+
 
         # check if the force smoothed changes
         force_changed = not np.allclose(current_force_obs, self.force_sensor_world_smooth)
@@ -149,6 +161,10 @@ class FlexivGearAssemblyPolicy:
             print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
             keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
             vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
+
+            if ROTATION:
+                keys.insert(-1, 'yaw_error')
+                vals.insert(-1, np.array([target_yaw_error]))
 
             for key, val in zip(keys, vals):
                 print(f"{key:<15}: {np.array2string(val, precision=4, suppress_small=True)}")

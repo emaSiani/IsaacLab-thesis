@@ -30,6 +30,7 @@ DEBUG = True
 # SUCCESS_THRESHOLD = 0.93
 SUCCESS_THRESHOLD = 0.995
 serial_number = "Rizon4s-063126"
+#serial_number = None
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
