@@ -384,7 +384,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         return time_out, time_out
 
-    def _get_curr_successes(self, success_threshold, check_rot=False):
+    def _get_curr_successes(self, success_threshold, check_rot=False, target_yaw_final:float=0.0):
         """Get success mask at current timestep."""
         curr_successes = torch.zeros((self.num_envs,), dtype=torch.bool, device=self.device)
 
@@ -399,7 +399,7 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             self.num_envs,
             self.device,
             self.is_rotation_phase_active,
-            self.cfg_task.ee_success_yaw
+            target_yaw_final
         )
 
         xy_dist = torch.linalg.vector_norm(target_held_base_pos[:, 0:2] - held_base_pos[:, 0:2], dim=1)
@@ -433,10 +433,18 @@ class Rizon4sFactoryEnv(DirectRLEnv):
             _, _, curr_yaw = torch_utils.get_euler_xyz(self.fingertip_midpoint_quat)
             # Normalizza in [-pi, pi] per sicurezza
             curr_yaw = rizon4s_factory_utils.wrap_yaw(curr_yaw)
-            target_yaw = self.cfg_task.ee_success_yaw
-            rot_error = torch.abs(curr_yaw - target_yaw)
-            rot_tolerance = np.pi * (1.0 - success_threshold)  # Tolleranza decrescente con successo
-            is_rotated = rot_error < rot_tolerance
+            # Conditional Target: 0.0 if outside, target_yaw if inside
+            is_inserted = z_disp < self.cfg_task.fixed_asset_cfg.height * self.cfg_task.success_threshold
+            active_target_yaw = torch.where(
+                is_inserted,
+                torch.tensor(target_yaw_final, device=self.device),
+                torch.tensor(0.0, device=self.device)
+            )
+
+            yaw_error = torch.abs(curr_yaw - active_target_yaw)
+            yaw_error = torch.where(yaw_error > np.pi, 2*np.pi - yaw_error, yaw_error)
+            rot_tolerance = 0.15 # ~8 gradi
+            is_rotated = yaw_error < rot_tolerance
             curr_successes = torch.logical_and(curr_successes, is_rotated)
 
         return curr_successes

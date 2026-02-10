@@ -305,7 +305,7 @@ class GearMesh(Rizon4sFactoryTask):
     success_threshold: float = 0.05
     engage_threshold: float = 0.9
 
-    ee_success_yaw: float = np.pi + np.pi / 4
+    ee_success_yaw: float = np.pi / 6
     rot_phase_activation_thresh: float = 0.8 # once 80% of envs learnt how to insert, then start to learn how to rotate
 
 

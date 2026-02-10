@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import numpy as np
+
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.direct.rizon4s_factory.rizon4s_factory_tasks_cfg import Rizon4sFactoryTask, PegInsert, GearMesh, NutThread
@@ -26,6 +28,7 @@ class Rizon4sForgePegInsert(PegInsert, Rizon4sForgeTask):
 @configclass
 class Rizon4sForgeGearMesh(GearMesh, Rizon4sForgeTask):
     contact_penalty_scale: float = 0.05
+    ee_success_yaw: float = np.pi / 6
 
 
 @configclass

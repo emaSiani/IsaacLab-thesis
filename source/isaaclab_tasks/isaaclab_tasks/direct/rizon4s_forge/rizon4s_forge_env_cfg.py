@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+import numpy as np
 
 import isaaclab.envs.mdp as mdp
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -13,10 +14,8 @@ from isaaclab_tasks.direct.rizon4s_factory.rizon4s_factory_env_cfg import OBS_DI
 from .rizon4s_forge_events import randomize_dead_zone
 from .rizon4s_forge_tasks_cfg import Rizon4sForgeGearMesh, Rizon4sForgeNutThread, Rizon4sForgePegInsert, Rizon4sForgeTask
 
-OBS_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
-
-STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
-
+OBS_DIM_CFG.update({"force_threshold": 1, "ft_force": 3, "target_yaw_error": 1})
+STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3, "target_yaw_error": 1})
 
 @configclass
 class ForgeCtrlCfg(CtrlCfg):
@@ -28,6 +27,7 @@ class ForgeCtrlCfg(CtrlCfg):
     pos_threshold_noise_level = [0.25, 0.25, 0.25]
     rot_threshold_noise_level = [0.29, 0.29, 0.29]
     default_dead_zone = [5.0, 5.0, 5.0, 1.0, 1.0, 1.0]
+    target_yaw_range = (-np.pi/6, np.pi/6)
 
 
 @configclass
@@ -108,6 +108,7 @@ class Rizon4sForgeEnvCfg(Rizon4sFactoryEnvCfg):
         "ee_angvel",
         "ft_force",
         "force_threshold",
+        "target_yaw_error",
     ]
     state_order: list = [
         "fingertip_pos",
@@ -126,6 +127,7 @@ class Rizon4sForgeEnvCfg(Rizon4sFactoryEnvCfg):
         "pos_threshold",
         "rot_threshold",
         "force_threshold",
+        "target_yaw_error",
     ]
 
 

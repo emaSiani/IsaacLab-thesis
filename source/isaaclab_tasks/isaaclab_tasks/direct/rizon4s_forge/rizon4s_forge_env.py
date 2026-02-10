@@ -50,6 +50,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         )
         self.pos_threshold = self.default_pos_threshold.clone()
         self.rot_threshold = self.default_rot_threshold.clone()
+        self.target_yaws = torch.zeros(self.num_envs, device=self.device)
 
     def _compute_intermediate_values(self, dt):
         """Add noise to observations for force sensing."""
@@ -111,8 +112,14 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         self.noisy_force = self.force_sensor_smooth[:, 0:3] + force_noise
 
     def _get_observations(self):
+        import numpy as np
         """Add additional FORGE observations."""
         obs_dict, state_dict = self._get_factory_obs_state_dict()
+        _, _, curr_yaw = torch_utils.get_euler_xyz(self.noisy_fingertip_quat)
+        curr_yaw = rizon4s_factory_utils.wrap_yaw(curr_yaw)
+        yaw_error_obs = abs(self.target_yaws - curr_yaw)
+        yaw_error_obs = torch.where(yaw_error_obs > np.pi, yaw_error_obs - 2*np.pi, yaw_error_obs)
+        yaw_error_obs = torch.where(yaw_error_obs < -np.pi, yaw_error_obs + 2*np.pi, yaw_error_obs)
 
         noisy_fixed_pos = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
         prev_actions = self.actions.clone()
@@ -125,6 +132,7 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
             "force_threshold": self.contact_penalty_thresholds[:, None],
             "ft_force": self.noisy_force,
             "prev_actions": prev_actions,
+            "target_yaw_error": yaw_error_obs.unsqueeze(-1), # Shape (num_envs, 1)
         })
 
         state_dict.update({
@@ -132,15 +140,13 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
             "ft_force": self.force_sensor_smooth[:, 0:3],
             "force_threshold": self.contact_penalty_thresholds[:, None],
             "prev_actions": prev_actions,
+            "target_yaw_error": yaw_error_obs.unsqueeze(-1), # Shape (num_envs, 1)
         })
 
         obs_tensors = rizon4s_factory_utils.collapse_obs_dict(obs_dict, self.cfg.obs_order + ["prev_actions"])
         state_tensors = rizon4s_factory_utils.collapse_obs_dict(state_dict, self.cfg.state_order + ["prev_actions"])
 
-        # --- NEW DASHBOARD PRINTING LOGIC ---
-        # --- STEP 1: PREPARE OBSERVATION STRING (DO NOT PRINT) ---
-
-        ## TODO : Check if correct
+        # ---DASHBOARD PRINTING LOGIC ----
         if self.episode_length_buf[0] % 15 == 0:
             import numpy as np
             output = "================= LIVE OBSERVATIONS (Env 0) =================\n"
@@ -246,88 +252,146 @@ class Rizon4sForgeEnv(Rizon4sFactoryEnv):
         )
 
     def _get_rewards(self):
-        """FORGE reward includes a contact penalty and success prediction error."""
-        # Use same base rewards as Factory.
-        rew_buf = super()._get_rewards()
+        # --- Sequential Reward Logic ---
+        # 1. Insertion Check
 
-        rew_dict, rew_scales = {}, {}
-        # Calculate action penalty for the asset-relative action space.
-        pos_error = torch.norm(self.delta_pos, p=2, dim=-1) / self.cfg.ctrl.pos_action_threshold[0]
-        rot_error = torch.abs(self.delta_yaw) / self.cfg.ctrl.rot_action_threshold[0]
-        # Contact penalty.
-        contact_force = torch.norm(self.force_sensor_smooth[:, 0:3], p=2, dim=-1, keepdim=False)
-        contact_penalty = torch.nn.functional.relu(contact_force - self.contact_penalty_thresholds)
-        # Add success prediction rewards.
-        check_rot = self.cfg_task.name in ["nut_thread", "gear_mesh"]
-        true_successes = self._get_curr_successes(
-            success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
+        held_base_pos, held_base_quat = rizon4s_factory_utils.get_held_base_pose(
+            self.held_pos, self.held_quat, self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
         )
-        policy_success_pred = (self.actions[:, 6] + 1) / 2  # rescale from [-1, 1] to [0, 1]
-        success_pred_error = (true_successes.float() - policy_success_pred).abs()
-        # Delay success prediction penalty until some successes have occurred.
-        if true_successes.float().mean() >= self.cfg_task.delay_until_ratio:
+        target_held_base_pos, target_held_base_quat = rizon4s_factory_utils.get_target_held_base_pose(
+            self.fixed_pos,
+            self.fixed_quat,
+            self.cfg_task.name,
+            self.cfg_task.fixed_asset_cfg,
+            self.num_envs,
+            self.device,
+            self.is_rotation_phase_active,
+            self.target_yaws
+        )
+
+        distance = torch.linalg.vector_norm(target_held_base_pos[:, 0:2] - held_base_pos[:, 0:2], dim=1)
+        z_disp = held_base_pos[:, 2] - target_held_base_pos[:, 2]
+        # 1.5 cm threshold for insertion
+        is_inserted = z_disp < self.cfg_task.fixed_asset_cfg.height * self.cfg_task.success_threshold
+        # 2. Insertion Reward
+        rew_insertion = 1.0 / (1.0 + 100.0 * distance**2)
+
+        # 3. Rotation Reward (Curriculum + Sequential)
+        _, _, curr_yaw = torch_utils.get_euler_xyz(self.fingertip_midpoint_quat)
+        curr_yaw = rizon4s_factory_utils.wrap_yaw(curr_yaw)
+
+        # Global curriculum check
+        target_yaw_final = 0.0
+        if self.is_rotation_phase_active:
+            target_yaw_final = self.target_yaws
+
+        # Conditional Target: 0.0 if outside, target_yaw if inside
+        active_target_yaw = torch.where(
+            is_inserted,
+            torch.tensor(target_yaw_final, device=self.device),
+            torch.tensor(0.0, device=self.device)
+        )
+
+        yaw_error = torch.abs(curr_yaw - active_target_yaw)
+        yaw_error = torch.where(yaw_error > np.pi, 2*np.pi - yaw_error, yaw_error)
+        yaw_error = torch.where(yaw_error < -np.pi, yaw_error + 2*np.pi, yaw_error)
+        rew_rotation = 1.0 / (1.0 + 10.0 * yaw_error**2)
+
+        # 4. Stage Bonus (Stay Inside)
+        rew_stage_bonus = is_inserted.float() * 2.0
+
+        # --- Forge Penalties (Original) ---
+        # Action penalty (Asset Relative)
+        pos_error_norm = torch.norm(self.delta_pos, p=2, dim=-1) / self.cfg.ctrl.pos_action_threshold[0]
+        rot_error_norm = torch.abs(self.delta_yaw) / self.cfg.ctrl.rot_action_threshold[0]
+        rew_action_penalty_asset = pos_error_norm + rot_error_norm
+
+        # Contact penalty
+        contact_force = torch.norm(self.force_sensor_smooth[:, 0:3], p=2, dim=-1, keepdim=False)
+        rew_contact_penalty = torch.nn.functional.relu(contact_force - self.contact_penalty_thresholds)
+
+        # Success Prediction
+        check_rot = self.cfg_task.name in ["nut_thread", "gear_mesh"]
+        curr_successes = self._get_curr_successes(
+            success_threshold=self.cfg_task.success_threshold, check_rot=check_rot, target_yaw_final=target_yaw_final
+        )
+        policy_success_pred = (self.actions[:, 6] + 1) / 2
+        rew_success_pred_error = (curr_successes.float() - policy_success_pred).abs()
+
+        if curr_successes.float().mean() >= self.cfg_task.delay_until_ratio:
             self.success_pred_scale = 1.0
 
-        # Add new FORGE reward terms.
+        # --- Combine Rewards ---
         rew_dict = {
-            "action_penalty_asset": pos_error + rot_error,
-            "contact_penalty": contact_penalty,
-            "success_pred_error": success_pred_error,
+            "rew_insertion": rew_insertion,
+            "rew_rotation": rew_rotation,
+            "rew_stage_bonus": rew_stage_bonus,
+            "action_penalty_asset": rew_action_penalty_asset,
+            "contact_penalty": rew_contact_penalty,
+            "success_pred_error": rew_success_pred_error,
+            "curr_success": curr_successes.float(),
+
         }
+
         rew_scales = {
+            "rew_insertion": 2.0,
+            "rew_rotation": 1.0,
+            "rew_stage_bonus": 1.0,
             "action_penalty_asset": -self.cfg_task.action_penalty_asset_scale,
             "contact_penalty": -self.cfg_task.contact_penalty_scale,
             "success_pred_error": -self.success_pred_scale,
+            "curr_success": 1.0,
         }
-        for rew_name, rew in rew_dict.items():
-            rew_buf += rew_dict[rew_name] * rew_scales[rew_name]
 
+        rew_buf = torch.zeros_like(rew_insertion)
+        for name, val in rew_dict.items():
+            rew_buf += val * rew_scales[name]
+
+        
+        self._log_factory_metrics(rew_dict, curr_successes)
         self._log_forge_metrics(rew_dict, policy_success_pred)
 
-        # --- DASHBOARD PRINTING (REWARDS) ---
-        # --- STEP 2: COMBINE AND PRINT EVERYTHING ---
-        # We check the same condition (mod 15) to keep sync
+        # --- INIZIO CODICE DEBUG (v8 - Orientamento) ---
+        
+        # 1. Concatena TUTTE le posizioni in coordinate globali
+        all_marker_locations_local = torch.cat([target_held_base_pos, held_base_pos], dim=0)
+        all_marker_locations_world = all_marker_locations_local + self.scene.env_origins.repeat(2, 1)
+
+        # 2. Concatena TUTTI gli orientamenti 
+        all_marker_orientations = torch.cat([target_held_base_quat, held_base_quat], dim=0)
+
+        self.debug_markers.visualize(
+            translations=all_marker_locations_world,
+            orientations=all_marker_orientations,
+            marker_indices=self.all_marker_indices
+        )
+        
+
+        full_dashboard = "\033[H\033[J" 
+        if hasattr(self, "_obs_debug_str"):
+            full_dashboard += self._obs_debug_str
+
+
+        # --- Dashboard ---
         if self.episode_length_buf[0] % 15 == 0 or self.episode_length_buf[0] == 1:
-            
-            # 1. Clear Screen
-            full_dashboard = "\033[H\033[J" 
-            
-            # 2. Add Observation Data (Retrieved from Step 1)
-            if hasattr(self, "_obs_debug_str"):
-                full_dashboard += self._obs_debug_str
-            
-            # 3. Add Reward Data
             full_dashboard += "\n----------------- LIVE REWARDS (Env 0) -----------------\n"
-            total_step_reward = rew_buf[0].item()
-
-            factory_rew_dict, factory_rew_scales = super()._get_factory_rew_dict(self._get_curr_successes(
-            success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
-        ))
-
-            # log both factory rew dict and forge rew_dict by combining their items
-            for name, val_tensor in {**factory_rew_dict, **rew_dict}.items():
-                scale = {**factory_rew_scales, **rew_scales}[name]
-                if isinstance(val_tensor, torch.Tensor):
-                    raw_val = val_tensor[0].item() if val_tensor.numel() > 1 else val_tensor.item()
-                else:
-                    raw_val = val_tensor
-                
-                weighted_val = raw_val * scale
-                full_dashboard += f"{name:<25}: {raw_val:8.4f} | (x{scale}) -> {weighted_val:8.4f}\n"
-
-            full_dashboard += f"{'TOTAL STEP REWARD':<25}:          |            -> {total_step_reward:8.4f}\n"
+            def v(t): return t[0].item() if isinstance(t, torch.Tensor) else t
+            for name, val in rew_dict.items():
+                s = rew_scales[name]
+                full_dashboard += f"{name:<25}: {v(val):8.4f} | (x{s}) -> {v(val)*s:8.4f}\n"
+            full_dashboard += f"{'TOTAL STEP REWARD':<25}:           |          -> {v(rew_buf):8.4f}\n"
+            full_dashboard += f"\n[State] Inserted: {is_inserted[0].item()} | RotActive: {self.is_rotation_phase_active} | Z-Err: {z_disp[0].item():.4f} | Yaw-Err: {yaw_error[0].item():.4f} \n"
             full_dashboard += "============================================================"
-            
-            # 4. Single Atomic Print (Prevents flickering)
             print(full_dashboard)
-        # --------------------------------------------
+
         return rew_buf
 
     def _reset_idx(self, env_ids):
         """Perform additional randomizations."""
         super()._reset_idx(env_ids)
-        print("Fingertip pos:", self.fingertip_midpoint_pos)
-        #print("Joint limits:", self._robot.joint_limits)
+
+        low, high = self.cfg.ctrl.target_yaw_range
+        self.target_yaws[env_ids] = torch.rand(len(env_ids), device=self.device) * (high - low) + low
 
         # Compute initial action for correct EMA computation.
         fixed_pos_action_frame = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
