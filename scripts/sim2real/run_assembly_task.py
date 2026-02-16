@@ -5,6 +5,7 @@ from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import numpy as np
 import os
+import csv
 import pinocchio as pin
 import matplotlib.pyplot as plt # [NEW] Plotting
 
@@ -33,6 +34,10 @@ seed=0
 SUCCESS_THRESHOLD = 0.995
 #serial_number = "Rizon4s-063126"
 serial_number = None
+
+ROOT_LOG_FOLDER = "logs"
+CSV_FILENAME =  ROOT_LOG_FOLDER + "/sim2real_results.csv"
+PLOTS_FOLDER = ROOT_LOG_FOLDER + "/plots"
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -65,6 +70,23 @@ class FlexivAssemblyNode(Node):
         self.log_forces = []
         self.log_scores = []
         self.tcp_offset_z = 0.19909 # [m] Offset TCP vs Flange
+
+        # [NEW] Metrics for CSV
+        self.metric_path_length = 0.0
+        self.metric_cumulative_force = 0.0
+        self.metric_max_force = 0.0
+        self.last_pos_for_metric = None
+        self.data_saved = False
+
+        # [NEW] Episode ID & File Setup
+        if not os.path.exists(PLOTS_FOLDER):
+            os.makedirs(PLOTS_FOLDER)
+        
+        self.episode_id = 1
+        if os.path.exists(CSV_FILENAME):
+            with open(CSV_FILENAME, 'r') as f:
+                # Count lines to determine ID (header is line 1)
+                self.episode_id = sum(1 for _ in f)
 
         # --- SETUP PINOCCHIO ---
         if not os.path.exists(URDF_PATH):
@@ -101,16 +123,12 @@ class FlexivAssemblyNode(Node):
         self.pub_traj = self.create_publisher(JointTrajectory, "/rizon_arm_controller/joint_trajectory", 1)
 
         self.create_timer(self.dt, self.control_loop)
-        self.get_logger().info(f"✅ Nodo Avviato. In attesa di TARE ({self.tare_steps} steps)...")
+        self.get_logger().info(f"✅ Node started. Episode ID: {self.episode_id}. Waiting for TARE calibration...")
 
     def cb_states(self, msg):
-        # self.get_logger().info(f"✅ Received message({msg}")
-
         self.robot_state = msg
 
     def cb_wrench_direct(self, msg):
-        # self.get_logger().info(f"✅ Received wrench")
-
         self.last_wrench_msg = msg
 
     def cb_joints(self, msg):
@@ -152,9 +170,7 @@ class FlexivAssemblyNode(Node):
                 self.robot_state.ext_wrench_in_world.wrench.force.z
             ])
 
-        # Fallback se usi lo script Isaac che pubblica WrenchStamped separatamente
         if not wrench_available and self.last_wrench_msg is not None:
-            # self.get_logger().info(f"✅ Qui ci sono pure")
             wrench_available = True
             curr_wrench = np.array([
                 self.last_wrench_msg.wrench.force.x,
@@ -165,22 +181,17 @@ class FlexivAssemblyNode(Node):
         if self.current_q is None or not pose_available:
             if self.step_count % 30 == 0: self.get_logger().warn("Waiting for Pose/Joints...")
             return
-
-        # [NEW] Apply TCP Offset Logic (Flange -> TCP)
-        # Calcolo le variabili per l'IK Correction prima di sovrascrivere curr_quat
+        # Flange to TCP
         M_world_flange = None
-        # Ricostruisco la trasformata della flangia
         rot_mat = pin.Quaternion(curr_quat[0], curr_quat[1], curr_quat[2], curr_quat[3]).toRotationMatrix()
         M_world_flange = pin.SE3(rot_mat, curr_pos)
-        # Trasformata Flange -> TCP
         M_flange_tcp = pin.SE3(np.eye(3), np.array([0.0, 0.0, self.tcp_offset_z]))
         M_world_tcp = M_world_flange * M_flange_tcp
-        # Sovrascrivo le variabili per la policy
         curr_pos = M_world_tcp.translation
         quat_pin = pin.Quaternion(M_world_tcp.rotation)
         curr_quat = np.array([quat_pin.w, quat_pin.x, quat_pin.y, quat_pin.z])
 
-        # --- 2. TARE PROCEDURE (AZZERAMENTO) ---
+        # --- 2. TARE PROCEDURE ---
         if not self.is_tared:
             self.wrench_bias += curr_wrench
             self.tare_counter += 1
@@ -191,19 +202,29 @@ class FlexivAssemblyNode(Node):
                 print("➡️  Starting Policy Control now.\n")
             return 
 
-        # Applica il Tare
         wrench_cleaned = curr_wrench - self.wrench_bias
+
+        # Metrics Update (Real-time)
+        force_norm = np.linalg.norm(wrench_cleaned)
+        if force_norm > self.metric_max_force:
+            self.metric_max_force = force_norm
+        
+        self.metric_cumulative_force += force_norm * self.dt
+
+        if self.last_pos_for_metric is not None:
+            self.metric_path_length += np.linalg.norm(curr_pos - self.last_pos_for_metric)
+        self.last_pos_for_metric = curr_pos
 
         # --- 3. POLICY INFERENCE ---
         target_twist, success_score = self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned)
 
-        # [NEW] Logging
+        # Logging
         self.log_steps.append(self.step_count)
         self.log_actions.append(target_twist)
         self.log_forces.append(wrench_cleaned)
         self.log_scores.append(success_score)
 
-        # --- 4. DEBUG (CON EMOJI) ---
+        # --- 4. DEBUG  ---
         if DEBUG and (self.step_count % 100 == 0 or self.step_count < 3):
             dist = np.linalg.norm(curr_pos - self.policy.fixed_pos)
 
@@ -224,10 +245,13 @@ class FlexivAssemblyNode(Node):
             print(f"\n🎉 SUCCESS DETECTED! Score: {success_score:.4f} > {SUCCESS_THRESHOLD}")
             print(f"🛑 Stopping Robot Commands at Step: {self.step_count}")
             self.task_completed = True
-            # Opzionale: Mandare un ultimo comando con velocità zero o la posizione corrente per "freezare"
+            
             self.publish_cmd(self.current_q) 
             self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned, self.task_completed)
-            # Chiusura nodo gestita nel main per permettere il plot
+
+            # Save CSV Data on Success
+            self.save_episode_data(termination_reason="Success", success_flag=True)
+            
             raise SystemExit 
 
         self.step_count += 1
@@ -258,8 +282,37 @@ class FlexivAssemblyNode(Node):
         pt.time_from_start = Duration(seconds=self.dt).to_msg()
         traj.points.append(pt)
         self.pub_traj.publish(traj)
+    
+    def save_episode_data(self, termination_reason, success_flag):
+        if self.data_saved: return
+        
+        completion_time = self.step_count * self.dt
+        
+        # CSV Headers: ID, Seed, Simulated, Success, Termination_Reason, Completion_Time, Path_Length, Max_Force, Cumulative_Force
+        file_exists = os.path.exists(CSV_FILENAME)
+        
+        with open(CSV_FILENAME, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["ID", "Seed", "Simulated", "Success", "Termination_Reason", 
+                                 "Completion_Time(s)", "Path_Length(m)", "Max_Force_Exerted(N)", "Cumulative_Contact_Force(N)"])
+            
+            writer.writerow([
+                self.episode_id,
+                seed,
+                SIMULATED,
+                success_flag,
+                termination_reason,
+                f"{completion_time:.4f}",
+                f"{self.metric_path_length:.4f}",
+                f"{self.metric_max_force:.4f}",
+                f"{self.metric_cumulative_force:.4f}"
+            ])
+        
+        print(f"\n💾 Episode Data saved to {CSV_FILENAME}")
+        self.data_saved = True
+        self.plot_results()
 
-    # [NEW] Plotting function
     def plot_results(self):
         """Genera i plot richiesti a fine esecuzione"""
         if not self.log_steps:
@@ -273,33 +326,31 @@ class FlexivAssemblyNode(Node):
         forces = np.array(self.log_forces)   # Shape (N, 3)
         scores = np.array(self.log_scores)   # Shape (N,)
 
-        # Creazione figura con 3 subplot
         fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
 
-        # 1. Andamento Azioni (Twist)
         # Plot Linear Velocity
         axs[0].plot(steps, actions[:, 0], label='Vx', linestyle='-', alpha=0.8)
         axs[0].plot(steps, actions[:, 1], label='Vy', linestyle='-', alpha=0.8)
         axs[0].plot(steps, actions[:, 2], label='Vz', linestyle='-', alpha=0.8)
-        # Plot Angular Velocity (tratteggiato per distinguere)
+        # Plot Angular Velocity 
         axs[0].plot(steps, actions[:, 3], label='Wx', linestyle='--', alpha=0.5)
         axs[0].plot(steps, actions[:, 4], label='Wy', linestyle='--', alpha=0.5)
         axs[0].plot(steps, actions[:, 5], label='Wz', linestyle='--', alpha=0.5)
         axs[0].set_ylabel("Action (Twist m/s & rad/s)")
-        axs[0].set_title("1. Andamento delle Azioni (Twist) nel tempo")
+        axs[0].set_title(f"Episode {self.episode_id} - Actions")
         axs[0].legend(loc='upper right', ncol=2)
         axs[0].grid(True, alpha=0.3)
 
-        # 2. Andamento Forze
+        # 2. Forces
         axs[1].plot(steps, forces[:, 0], label='Fx', color='r', alpha=0.7)
         axs[1].plot(steps, forces[:, 1], label='Fy', color='g', alpha=0.7)
         axs[1].plot(steps, forces[:, 2], label='Fz', color='b', alpha=0.7)
         axs[1].set_ylabel("Force (N)")
-        axs[1].set_title("2. Andamento delle Forze Misurate (World Frame)")
+        axs[1].set_title("2. Forces (World Frame)")
         axs[1].legend(loc='upper right')
         axs[1].grid(True, alpha=0.3)
 
-        # 3. Iterazioni e Successo
+        # 3. Success Score
         axs[2].plot(steps, scores, label='Success Score', color='purple', linewidth=2)
         axs[2].axhline(y=SUCCESS_THRESHOLD, color='k', linestyle='--', label='Threshold')
         axs[2].set_ylabel("Probability")
@@ -310,7 +361,10 @@ class FlexivAssemblyNode(Node):
         axs[2].set_ylim([-0.1, 1.1])
 
         plt.tight_layout()
-        plt.show()
+        plot_path = os.path.join(PLOTS_FOLDER, f"episode_{self.episode_id}.png")
+        plt.savefig(plot_path)
+        print(f"🖼️  Plot saved to: {plot_path}")
+        # plt.show() # Commented out to allow automated running
 
 def main():
     rclpy.init()
@@ -320,11 +374,12 @@ def main():
         rclpy.spin(node)
     except (KeyboardInterrupt, SystemExit):
         print("\n🛑 Interruzione rilevata.")
+        # Save aborted data if not already saved
+        if not node.task_completed:
+             node.save_episode_data(termination_reason="Aborted", success_flag=False)
     finally:
-        node.plot_results() # [NEW] Plot on exit
         node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
- 
