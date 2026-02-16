@@ -27,10 +27,12 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 60.0 
 DEBUG = True
+SIMULATED = True
+seed=0
 # SUCCESS_THRESHOLD = 0.93
 SUCCESS_THRESHOLD = 0.995
-serial_number = "Rizon4s-063126"
-#serial_number = None
+#serial_number = "Rizon4s-063126"
+serial_number = None
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -47,7 +49,7 @@ class FlexivAssemblyNode(Node):
         # Variabili Stato
         self.robot_state = None      
         self.current_q = None        
-        self.policy = FlexivGearAssemblyPolicy()
+        self.policy = FlexivGearAssemblyPolicy(seed)
 
         # TARE Variables
         self.tare_steps = 20

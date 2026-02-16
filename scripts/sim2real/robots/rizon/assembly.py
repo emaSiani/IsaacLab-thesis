@@ -12,7 +12,7 @@ ROTATION = False
 
 
 class FlexivGearAssemblyPolicy:
-    def __init__(self):
+    def __init__(self, seed=0):
         # --- PATH CONFIG ---
         #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
         if not ROTATION:
@@ -20,7 +20,14 @@ class FlexivGearAssemblyPolicy:
         else:
             self.policy_path = r"robots/rizon/policies/rotation_policy.pt"
 
-        self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+        match seed:
+            case 0: 
+                self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+            case 1:
+                self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+            case 2:
+                self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+
         self.target_yaw =  np.pi / 6
         self.force_threshold = np.array([5.74]) 
 
