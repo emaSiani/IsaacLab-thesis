@@ -29,9 +29,9 @@ URDF_PATH = "robots/rizon4s_kinematics.urdf"
 CONTROL_FREQ = 60.0 
 DEBUG = True
 SIMULATED = True
-seed=0
+seed=3
 # SUCCESS_THRESHOLD = 0.93
-SUCCESS_THRESHOLD = 0.995
+SUCCESS_THRESHOLD = 0.999
 #serial_number = "Rizon4s-063126"
 serial_number = None
 

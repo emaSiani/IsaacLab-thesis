@@ -24,9 +24,11 @@ class FlexivGearAssemblyPolicy:
             case 0: 
                 self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
             case 1:
-                self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+                self.fixed_pos = np.array([0.64091, 0.04118, 0.11824]) 
             case 2:
-                self.fixed_pos = np.array([0.65091, 0.04118, 0.11824]) 
+                self.fixed_pos = np.array([0.65091, 0.01998, 0.11824]) 
+            case 3: 
+                self.fixed_pos = np.array([0.65091, 0.04118, 0.12824]) 
 
         self.target_yaw =  np.pi / 6
         self.force_threshold = np.array([5.74]) 
@@ -49,10 +51,10 @@ class FlexivGearAssemblyPolicy:
         self.pos_threshold = 0.02
         self.rot_threshold = 0.097
 
-        # EMA Smoothing (Azioni)
+        # EMA Smoothing 
         self.ema_factor = 0.05
 
-        # FT Smoothing (Forza) - Dal config originale ft_smoothing_factor = 0.25
+        # FT Smoothing 
         self.ft_smoothing_factor = 0.25
 
         # --- STATE BUFFERS ---
@@ -84,8 +86,8 @@ class FlexivGearAssemblyPolicy:
         """
         Args:
             current_ee_pos: [x, y, z]
-            current_ee_quat: [w, x, y, z] (Isaac Order)
-            current_force_world_raw: [fx, fy, fz] (GIA' IN WORLD FRAME da ROS)
+            current_ee_quat: [w, x, y, z] 
+            current_force_world_raw: [fx, fy, fz] 
         """
         current_ee_quat[0] = 0.0
         current_ee_quat[3] = 0.0
@@ -120,19 +122,12 @@ class FlexivGearAssemblyPolicy:
         rot_vec = r_diff.as_rotvec()
         ang_vel = rot_vec / self.dt
 
-        # 3. FORCE PROCESSING (Solo Smoothing, NIENTE Rotazione)
-        # Il topic ROS ext_wrench_in_world è già orientato correttamente.
-
         # Applica Smoothing esponenziale
         alpha = self.ft_smoothing_factor
         self.force_sensor_world_smooth = alpha * current_force_world_raw + (1 - alpha) * self.force_sensor_world_smooth
 
         current_force_obs = self.force_sensor_world_smooth
-
-        # 4. Posizione Relativa
         pos_rel = current_ee_pos - self.fixed_pos
-
-        # 5. Prev Actions Masking
         masked_prev_actions = self.prev_action_smooth.copy()
         masked_prev_actions[3:5] = 0.0 
 
@@ -193,10 +188,9 @@ class FlexivGearAssemblyPolicy:
         smooth_action = ema * raw_action + (1 - ema) * self.prev_action_smooth
         self.prev_action_smooth = smooth_action
 
-        # --- ESTRAZIONE SUCCESS PREDICTION ---
-        # L'indice 6 è la predizione (-1 fallimento, +1 successo)
+
         raw_success_pred = smooth_action[6] 
-        # Scaliamo da [-1, 1] a [0, 1]
+        # Scaling to [0, 1]
         success_score = (raw_success_pred + 1.0) / 2.0
 
         if DEBUG and (self.step_counter % 100 == 0 or self.step_counter < 3):
