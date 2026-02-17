@@ -14,7 +14,6 @@ ROTATION = False
 class FlexivGearAssemblyPolicy:
     def __init__(self, seed=0):
         # --- PATH CONFIG ---
-        #self.policy_path = r"robots/rizon/policies/rizon4s_200ep_512envs_increase_kp_scale.pt"
         if not ROTATION:
             self.policy_path = r"robots/rizon/policies/policy.pt"
         else:
@@ -40,7 +39,7 @@ class FlexivGearAssemblyPolicy:
         self.model.eval()
 
         # --- PARAMETRI TRAINING ---
-        self.dt = 1.0 / 15.0 # ~0.066s (corretto rispetto a 0.02s di simulazione fisica pura)
+        self.dt = 1.0 / 15.0 # 
         # Nota: self.dt qui è il dt di CONTROLLO (decimato). 
 
         # Bounds & Thresholds
@@ -197,8 +196,8 @@ class FlexivGearAssemblyPolicy:
             print(f"🔮 Success Prediction: {raw_success_pred:.2f} -> {success_score:.2f}")
 
         # 9. FORGE LOGIC: Convert Action to Twist
-        pos_action_delta = smooth_action[0:3] * self.pos_action_bounds
-        rot_action_delta = smooth_action[3:6] * self.rot_action_bounds
+        pos_action_delta = masked_prev_actions[0:3] * self.pos_action_bounds
+        rot_action_delta = masked_prev_actions[3:6] * self.rot_action_bounds
 
         target_pos_world = self.fixed_pos + pos_action_delta
         delta_pos = target_pos_world - current_ee_pos
