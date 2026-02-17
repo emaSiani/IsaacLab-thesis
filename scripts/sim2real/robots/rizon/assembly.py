@@ -4,8 +4,12 @@ import torch
 from scipy.spatial.transform import Rotation as R
 
 DEBUG = True
-SIMULATION = True
+SIMULATION = False
 ROTATION = False
+if SIMULATION:
+    FORCE_SCALE = (12.5/150)
+else:
+    FORCE_SCALE = 1.0
 
 # INITIAL ROBOT POSE
 # deg: [-27.46, -45.05, 52.05, 92.91, -39.24, 28.07, -150.73]  
@@ -25,12 +29,12 @@ class FlexivGearAssemblyPolicy:
             case 1:
                 self.fixed_pos = np.array([0.64091, 0.04118, 0.11824]) 
             case 2:
-                self.fixed_pos = np.array([0.65091, 0.01998, 0.11824]) 
+                self.fixed_pos = np.array([0.65091, 0.02016, 0.11824]) 
             case 3: 
                 self.fixed_pos = np.array([0.65091, 0.04118, 0.12824]) 
 
         self.target_yaw =  np.pi / 6
-        self.force_threshold = np.array([5.74]) 
+        self.force_threshold = np.array([5.25]) 
 
         # --- MODEL LOAD ---
         self.device = torch.device("cpu")
@@ -90,12 +94,13 @@ class FlexivGearAssemblyPolicy:
         """
         current_ee_quat[0] = 0.0
         current_ee_quat[3] = 0.0
+        current_ee_quat *= -1.0
 
         if self.prev_ee_pos is None:
             self.prev_ee_pos = current_ee_pos
             self.prev_ee_quat = current_ee_quat
-            self.force_sensor_world_smooth = current_force_world_raw
-            
+            self.force_sensor_world_smooth = current_force_world_raw 
+
             pos_rel_start = current_ee_pos - self.fixed_pos
             
             init_action = np.zeros(7, dtype=np.float32)
@@ -112,8 +117,8 @@ class FlexivGearAssemblyPolicy:
         # 2. Compute Input Velocities (Finite Difference)
         lin_vel = (current_ee_pos - self.prev_ee_pos) / self.dt
 
-        if np.dot(current_ee_quat, self.prev_ee_quat) < 0:
-            current_ee_quat = -current_ee_quat 
+        #if np.dot(current_ee_quat, self.prev_ee_quat) < 0:
+        #    current_ee_quat = -current_ee_quat 
 
         r_curr = R.from_quat([current_ee_quat[1], current_ee_quat[2], current_ee_quat[3], current_ee_quat[0]])
         r_prev = R.from_quat([self.prev_ee_quat[1], self.prev_ee_quat[2], self.prev_ee_quat[3], self.prev_ee_quat[0]])
@@ -124,8 +129,7 @@ class FlexivGearAssemblyPolicy:
         # Applica Smoothing esponenziale
         alpha = self.ft_smoothing_factor
         self.force_sensor_world_smooth = alpha * current_force_world_raw + (1 - alpha) * self.force_sensor_world_smooth
-
-        current_force_obs = self.force_sensor_world_smooth
+        current_force_obs = self.force_sensor_world_smooth * FORCE_SCALE
         pos_rel = current_ee_pos - self.fixed_pos
         masked_prev_actions = self.prev_action_smooth.copy()
         masked_prev_actions[3:5] = 0.0 
@@ -156,9 +160,8 @@ class FlexivGearAssemblyPolicy:
 
 
         # check if the force smoothed changes
-        force_changed = not np.allclose(current_force_obs, self.force_sensor_world_smooth)
 
-        if DEBUG and ((self.step_counter % 100 == 0 or self.step_counter < 3) or force_changed or task_completed): 
+        if DEBUG and ((self.step_counter % 100 == 0 or self.step_counter < 3) or task_completed): 
             print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
             keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
             vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
@@ -196,8 +199,9 @@ class FlexivGearAssemblyPolicy:
             print(f"🔮 Success Prediction: {raw_success_pred:.2f} -> {success_score:.2f}")
 
         # 9. FORGE LOGIC: Convert Action to Twist
-        pos_action_delta = masked_prev_actions[0:3] * self.pos_action_bounds
-        rot_action_delta = masked_prev_actions[3:6] * self.rot_action_bounds
+        pos_action_delta = smooth_action[0:3] * self.pos_action_bounds
+        rot_action_delta = smooth_action[3:6] * self.rot_action_bounds
+        rot_action_delta[3:5] = 0.0
 
         target_pos_world = self.fixed_pos + pos_action_delta
         delta_pos = target_pos_world - current_ee_pos

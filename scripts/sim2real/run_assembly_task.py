@@ -28,12 +28,12 @@ from robots.rizon.assembly import FlexivGearAssemblyPolicy
 URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 CONTROL_FREQ = 60.0 
 DEBUG = True
-SIMULATED = True
+SIMULATED = False
 seed=0
-# SUCCESS_THRESHOLD = 0.93
-SUCCESS_THRESHOLD = 0.999
-#serial_number = "Rizon4s-063126"
-serial_number = None
+SUCCESS_THRESHOLD = 0.93
+#SUCCESS_THRESHOLD = 0.999
+serial_number = "Rizon4s-063126"
+# serial_number = None
 
 ROOT_LOG_FOLDER = "logs"
 CSV_FILENAME =  ROOT_LOG_FOLDER + "/sim2real_results.csv"
