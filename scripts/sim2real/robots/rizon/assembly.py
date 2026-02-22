@@ -102,12 +102,12 @@ class FlexivGearAssemblyPolicy:
             self.force_sensor_world_smooth = current_force_world_raw 
 
             pos_rel_start = current_ee_pos - self.fixed_pos
-            
+
             init_action = np.zeros(7, dtype=np.float32)
             init_action[0:3] = pos_rel_start / self.pos_action_bounds
-            
+
             init_action[6] = -1.0
-            
+
             self.prev_action_smooth = init_action
             self.prev_action = init_action
             # ---------------------------------------------------

@@ -29,8 +29,8 @@ URDF_PATH = "robots/rizon4s_kinematics.urdf"
 CONTROL_FREQ = 60.0 
 DEBUG = True
 SIMULATED = False
-seed=0
-SUCCESS_THRESHOLD = 0.93
+seed=2
+SUCCESS_THRESHOLD = 0.99
 #SUCCESS_THRESHOLD = 0.999
 serial_number = "Rizon4s-063126"
 # serial_number = None
@@ -81,7 +81,7 @@ class FlexivAssemblyNode(Node):
         # [NEW] Episode ID & File Setup
         if not os.path.exists(PLOTS_FOLDER):
             os.makedirs(PLOTS_FOLDER)
-        
+
         self.episode_id = 1
         if os.path.exists(CSV_FILENAME):
             with open(CSV_FILENAME, 'r') as f:
@@ -208,7 +208,7 @@ class FlexivAssemblyNode(Node):
         force_norm = np.linalg.norm(wrench_cleaned)
         if force_norm > self.metric_max_force:
             self.metric_max_force = force_norm
-        
+
         self.metric_cumulative_force += force_norm * self.dt
 
         if self.last_pos_for_metric is not None:
@@ -245,13 +245,13 @@ class FlexivAssemblyNode(Node):
             print(f"\n🎉 SUCCESS DETECTED! Score: {success_score:.4f} > {SUCCESS_THRESHOLD}")
             print(f"🛑 Stopping Robot Commands at Step: {self.step_count}")
             self.task_completed = True
-            
+
             self.publish_cmd(self.current_q) 
             self.policy.compute_twist(curr_pos, curr_quat, wrench_cleaned, self.task_completed)
 
             # Save CSV Data on Success
             self.save_episode_data(termination_reason="Success", success_flag=True)
-            
+
             raise SystemExit 
 
         self.step_count += 1
@@ -282,21 +282,21 @@ class FlexivAssemblyNode(Node):
         pt.time_from_start = Duration(seconds=self.dt).to_msg()
         traj.points.append(pt)
         self.pub_traj.publish(traj)
-    
+
     def save_episode_data(self, termination_reason, success_flag):
         if self.data_saved: return
-        
+
         completion_time = self.step_count * self.dt
-        
+
         # CSV Headers: ID, Seed, Simulated, Success, Termination_Reason, Completion_Time, Path_Length, Max_Force, Cumulative_Force
         file_exists = os.path.exists(CSV_FILENAME)
-        
+
         with open(CSV_FILENAME, mode='a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
                 writer.writerow(["ID", "Seed", "Simulated", "Success", "Termination_Reason", 
-                                 "Completion_Time(s)", "Path_Length(m)", "Max_Force_Exerted(N)", "Cumulative_Contact_Force(N)"])
-            
+                                 "Completion_Time(s)", "Path_Length(m)", "Max_Force_Exerted(N)", "Cumulative_Contact_Force(N)", "Success_threshold", "False_positive"])
+
             writer.writerow([
                 self.episode_id,
                 seed,
@@ -306,9 +306,10 @@ class FlexivAssemblyNode(Node):
                 f"{completion_time:.4f}",
                 f"{self.metric_path_length:.4f}",
                 f"{self.metric_max_force:.4f}",
-                f"{self.metric_cumulative_force:.4f}"
+                f"{self.metric_cumulative_force:.4f}",
+                f"{SUCCESS_THRESHOLD:.4f}"
             ])
-        
+
         print(f"\n💾 Episode Data saved to {CSV_FILENAME}")
         self.data_saved = True
         self.plot_results()
