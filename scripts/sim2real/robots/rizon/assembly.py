@@ -43,8 +43,7 @@ class FlexivGearAssemblyPolicy:
         self.model.eval()
 
         # --- PARAMETRI TRAINING ---
-        self.dt = 1.0 / 15.0 # 
-        # Nota: self.dt qui è il dt di CONTROLLO (decimato). 
+        self.dt = 1.0 / 15.0 # 15hz frequency as in training
 
         # Bounds & Thresholds
         self.pos_action_bounds = np.array([0.05, 0.05, 0.05], dtype=np.float32)
@@ -76,14 +75,6 @@ class FlexivGearAssemblyPolicy:
         self.rnn_states = (h, c)
 
         self.step_counter = 0
-
-    def rotate_force_to_world(self, force_body, quat_xyzw):
-        """Ruota la forza dal frame sensore (Body) al frame World"""
-        # Se il sensore ti da già forza in World Frame, puoi saltare questo.
-        # Ma solitamente i sensori F/T sono montati sulla flangia.
-        r = R.from_quat(quat_xyzw)
-        force_world = r.apply(force_body)
-        return force_world
 
     def compute_twist(self, current_ee_pos, current_ee_quat, current_force_world_raw, task_completed=False):
         """

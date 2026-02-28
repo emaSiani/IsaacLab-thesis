@@ -20,7 +20,7 @@ try:
     FLEXIV_IMPORTED = True
 except ImportError:
     FLEXIV_IMPORTED = False
-    print("\n⚠️ [WARNING] flexiv_msgs non trovato.\n")
+    print("\n⚠️ [WARNING] flexiv_msgs not found.\n")
 
 from robots.rizon.assembly import FlexivGearAssemblyPolicy
 
@@ -90,8 +90,8 @@ class FlexivAssemblyNode(Node):
 
         # --- SETUP PINOCCHIO ---
         if not os.path.exists(URDF_PATH):
-            self.get_logger().error(f"URDF MANCANTE: {os.path.abspath(URDF_PATH)}")
-            raise FileNotFoundError("Manca il file rizon4s_kinematics.urdf")
+            self.get_logger().error(f"Missing URDF: {os.path.abspath(URDF_PATH)}")
+            raise FileNotFoundError("Missing file rizon4s_kinematics.urdf")
 
         self.model = pin.buildModelFromUrdf(URDF_PATH)
         self.data = self.model.createData()
