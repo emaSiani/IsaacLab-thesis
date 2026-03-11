@@ -1,137 +1,88 @@
-![Isaac Lab](docs/source/_static/isaaclab.jpg)
+# Isaac Lab Snapshot: Flexiv Rizon 4s End-to-End Sim2Real Pipeline
+
+This archive contains a complete, customized snapshot of **NVIDIA Isaac Lab**. It has been specifically modified and extended to provide an end-to-end Reinforcement Learning (RL) pipeline—from training in simulation to physical deployment—for the Flexiv Rizon 4s robotic arm, with a primary focus on contact-rich assembly tasks like Gear Meshing.
+
+By packaging the entire Isaac Lab framework, this snapshot ensures perfect version compatibility between the underlying physics engine, the customized training environments, and the deployment utilities.
 
 ---
 
-# Isaac Lab
+## 🌟 Key Additions & Modifications
 
-[![IsaacSim](https://img.shields.io/badge/IsaacSim-5.0.0-silver.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
-[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://docs.python.org/3/whatsnew/3.11.html)
-[![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
-[![Windows platform](https://img.shields.io/badge/platform-windows--64-orange.svg)](https://www.microsoft.com/en-us/)
-[![pre-commit](https://img.shields.io/github/actions/workflow/status/isaac-sim/IsaacLab/pre-commit.yaml?logo=pre-commit&logoColor=white&label=pre-commit&color=brightgreen)](https://github.com/isaac-sim/IsaacLab/actions/workflows/pre-commit.yaml)
-[![docs status](https://img.shields.io/github/actions/workflow/status/isaac-sim/IsaacLab/docs.yaml?label=docs&color=brightgreen)](https://github.com/isaac-sim/IsaacLab/actions/workflows/docs.yaml)
-[![License](https://img.shields.io/badge/license-BSD--3-yellow.svg)](https://opensource.org/licenses/BSD-3-Clause)
-[![License](https://img.shields.io/badge/license-Apache--2.0-yellow.svg)](https://opensource.org/license/apache-2-0)
+This snapshot introduces three major architectural contributions on top of the base Isaac Lab framework:
 
+1. **Custom Training Environments (Factory & Forge)**
+   * Located in `source/isaaclab_tasks/isaaclab_tasks/direct/`.
+   * We have adapted the NVIDIA FORGE and Factory environments (originally designed for the Franka Emika Panda) to fully support the **Flexiv Rizon 4s**. 
+   * Includes custom USD assets, re-aligned Tool Center Point (TCP) frames, tailored initialization logic for the GRAV gripper's mimic joints, and specific domain randomizations to close the Sim-to-Real gap.
 
-**Isaac Lab** is a GPU-accelerated, open-source framework designed to unify and simplify robotics research workflows,
-such as reinforcement learning, imitation learning, and motion planning. Built on [NVIDIA Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html),
-it combines fast and accurate physics and sensor simulation, making it an ideal choice for sim-to-real
-transfer in robotics.
+2. **Automated Policy Export (`rl_games`)**
+   * Located in `scripts/reinforcement_learning/rl_games/`.
+   * The standard training loop has been patched. Upon training completion (or during evaluation), the framework now automatically wraps the neural network and normalizer, forces `float32` types, and traces the model into a deployable **TorchScript (`.pt`) format**.
 
-Isaac Lab provides developers with a range of essential features for accurate sensor simulation, such as RTX-based
-cameras, LIDAR, or contact sensors. The framework's GPU acceleration enables users to run complex simulations and
-computations faster, which is key for iterative processes like reinforcement learning and data-intensive tasks.
-Moreover, Isaac Lab can run locally or be distributed across the cloud, offering flexibility for large-scale deployments.
+3. **Sim2Real Deployment Pipeline**
+   * Located in `scripts/sim2real/`.
+   * A complete ROS 2-based deployment architecture capable of controlling both the simulated and the real physical robot. It features a custom node to bridge simulated PhysX wrenches to ROS, Pinocchio-based Differential Inverse Kinematics, and real-time execution of the exported PyTorch policies.
 
+---
 
-## Key Features
+## 📁 Repository Highlights (Where to find what)
 
-Isaac Lab offers a comprehensive set of tools and environments designed to facilitate robot learning:
+To navigate this large snapshot, here are the critical directories that have been added or modified:
 
-- **Robots**: A diverse collection of robots, from manipulators, quadrupeds, to humanoids, with 16 commonly available models.
-- **Environments**: Ready-to-train implementations of more than 30 environments, which can be trained with popular reinforcement learning frameworks such as RSL RL, SKRL, RL Games, or Stable Baselines. We also support multi-agent reinforcement learning.
-- **Physics**: Rigid bodies, articulated systems, deformable objects
-- **Sensors**: RGB/depth/segmentation cameras, camera annotations, IMU, contact sensors, ray casters.
-
-
-## Getting Started
-
-### Documentation
-
-Our [documentation page](https://isaac-sim.github.io/IsaacLab) provides everything you need to get started, including
-detailed tutorials and step-by-step guides. Follow these links to learn more about:
-
-- [Installation steps](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html#local-installation)
-- [Reinforcement learning](https://isaac-sim.github.io/IsaacLab/main/source/overview/reinforcement-learning/rl_existing_scripts.html)
-- [Tutorials](https://isaac-sim.github.io/IsaacLab/main/source/tutorials/index.html)
-- [Available environments](https://isaac-sim.github.io/IsaacLab/main/source/overview/environments.html)
-
-
-## Isaac Sim Version Dependency
-
-Isaac Lab is built on top of Isaac Sim and requires specific versions of Isaac Sim that are compatible with each
-release of Isaac Lab. Below, we outline the recent Isaac Lab releases and GitHub branches and their corresponding
-dependency versions for Isaac Sim.
-
-| Isaac Lab Version             | Isaac Sim Version   |
-| ----------------------------- | ------------------- |
-| `main` branch                 | Isaac Sim 4.5 / 5.0 |
-| `v2.2.X`                      | Isaac Sim 4.5 / 5.0 |
-| `v2.1.X`                      | Isaac Sim 4.5       |
-| `v2.0.X`                      | Isaac Sim 4.5       |
-
-
-## Contributing to Isaac Lab
-
-We wholeheartedly welcome contributions from the community to make this framework mature and useful for everyone.
-These may happen as bug reports, feature requests, or code contributions. For details, please check our
-[contribution guidelines](https://isaac-sim.github.io/IsaacLab/main/source/refs/contributing.html).
-
-## Show & Tell: Share Your Inspiration
-
-We encourage you to utilize our [Show & Tell](https://github.com/isaac-sim/IsaacLab/discussions/categories/show-and-tell)
-area in the `Discussions` section of this repository. This space is designed for you to:
-
-* Share the tutorials you've created
-* Showcase your learning content
-* Present exciting projects you've developed
-
-By sharing your work, you'll inspire others and contribute to the collective knowledge
-of our community. Your contributions can spark new ideas and collaborations, fostering
-innovation in robotics and simulation.
-
-## Troubleshooting
-
-Please see the [troubleshooting](https://isaac-sim.github.io/IsaacLab/main/source/refs/troubleshooting.html) section for
-common fixes or [submit an issue](https://github.com/isaac-sim/IsaacLab/issues).
-
-For issues related to Isaac Sim, we recommend checking its [documentation](https://docs.omniverse.nvidia.com/app_isaacsim/app_isaacsim/overview.html)
-or opening a question on its [forums](https://forums.developer.nvidia.com/c/agx-autonomous-machines/isaac/67).
-
-## Support
-
-* Please use GitHub [Discussions](https://github.com/isaac-sim/IsaacLab/discussions) for discussing ideas,
-  asking questions, and requests for new features.
-* Github [Issues](https://github.com/isaac-sim/IsaacLab/issues) should only be used to track executable pieces of
-  work with a definite scope and a clear deliverable. These can be fixing bugs, documentation issues, new features,
-  or general updates.
-
-## Connect with the NVIDIA Omniverse Community
-
-Do you have a project or resource you'd like to share more widely? We'd love to hear from you!
-Reach out to the NVIDIA Omniverse Community team at OmniverseCommunity@nvidia.com to explore opportunities
-to spotlight your work.
-
-You can also join the conversation on the [Omniverse Discord](https://discord.com/invite/nvidiaomniverse) to
-connect with other developers, share your projects, and help grow a vibrant, collaborative ecosystem
-where creativity and technology intersect. Your contributions can make a meaningful impact on the Isaac Lab
-community and beyond!
-
-## License
-
-The Isaac Lab framework is released under [BSD-3 License](LICENSE). The `isaaclab_mimic` extension and its
-corresponding standalone scripts are released under [Apache 2.0](LICENSE-mimic). The license files of its
-dependencies and assets are present in the [`docs/licenses`](docs/licenses) directory.
-
-Note that Isaac Lab requires Isaac Sim, which includes components under proprietary licensing terms. Please see the [Isaac Sim license](docs/licenses/dependencies/isaacsim-license.txt) for information on Isaac Sim licensing.
-
-Note that the `isaaclab_mimic` extension requires cuRobo, which has proprietary licensing terms that can be found in [`docs/licenses/dependencies/cuRobo-license.txt`](docs/licenses/dependencies/cuRobo-license.txt).
-
-## Acknowledgement
-
-Isaac Lab development initiated from the [Orbit](https://isaac-orbit.github.io/) framework. We would appreciate if
-you would cite it in academic publications as well:
+```text
+IsaacLab-Snapshot/
+├── scripts/
+│   ├── sim2real/                 # [NEW] Deployment framework (run_assembly_task.py, ROS adapters)
+│   │   └── requirements/         # [NEW] Conda env files (env_isaaclab.yml, ros_rl_env.yml)
+│   └── reinforcement_learning/   # [MODIFIED] rl_games with auto-export to TorchScript
+├── source/
+│   └── isaaclab_tasks/isaaclab_tasks/direct/
+│       ├── rizon4s_factory/      # [NEW] Base kinematic assembly environments
+│       └── rizon4s_forge/        # [NEW] Advanced force-aware Sim2Real environments
+└── robots/                       # [NEW] Flexiv Rizon 4s USD assets
 
 ```
-@article{mittal2023orbit,
-   author={Mittal, Mayank and Yu, Calvin and Yu, Qinxi and Liu, Jingzhou and Rudin, Nikita and Hoeller, David and Yuan, Jia Lin and Singh, Ritvik and Guo, Yunrong and Mazhar, Hammad and Mandlekar, Ajay and Babich, Buck and State, Gavriel and Hutter, Marco and Garg, Animesh},
-   journal={IEEE Robotics and Automation Letters},
-   title={Orbit: A Unified Simulation Framework for Interactive Robot Learning Environments},
-   year={2023},
-   volume={8},
-   number={6},
-   pages={3740-3747},
-   doi={10.1109/LRA.2023.3270034}
-}
+
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Environment Setup
+
+Before running any scripts, ensure you have created the necessary Conda environments using the provided requirement files located in the deployment folder:
+
+```bash
+conda env create -f scripts/sim2real/requirements/env_isaaclab.yml
+conda env create -f scripts/sim2real/requirements/ros_rl_env.yml
+
 ```
+
+### 2. Training the Policy
+
+To train the Gear Mesh policy using the customized FORGE environment:
+
+```bash
+conda activate env_isaaclab
+./isaaclab.sh -p ./scripts/reinforcement_learning/rl_games/train.py --task=Isaac-Rizon4s-Forge-GearMesh-Direct-v0 --num_envs 512
+
+```
+
+*The trained `.pt` policy and its `_env_config.yaml` will be automatically exported to the `logs/` directory.*
+
+### 3. Deployment (Sim2Real)
+
+Copy your exported `.pt` policy into the `scripts/sim2real/robots/rizon/policies/` folder.
+To run the deployment, you will use the `ros_rl_env` and orchestrate the simulation bridge and the control node.
+
+---
+
+## 📖 Further Documentation (Detailed READMEs)
+
+To keep this root document concise, deep-dives into the specific components are split into their own dedicated README files. Please consult the following documents located within the snapshot:
+
+* **Training Architecture:** Located at `source/isaaclab_tasks/isaaclab_tasks/direct/README.md`.
+* *Read this for:* Details on the POMDP formulation, reward structure, continuous noise injection, and the exact domain randomization bounds.
+
+
+* **Deployment Architecture:** Located at `scripts/sim2real/README.md`.
+* *Read this for:* Full, step-by-step terminal commands regarding both Simulated and Real-World deployment, the ROS 2 node setup, the Isaac Sim physics adapter, and Pinocchio DLS IK logic.
