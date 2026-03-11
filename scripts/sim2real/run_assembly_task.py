@@ -25,19 +25,27 @@ except ImportError:
 from robots.rizon.assembly import FlexivGearAssemblyPolicy
 
 # --- CONFIGURAZIONE ---
-URDF_PATH = "robots/rizon4s_kinematics.urdf" 
-CONTROL_FREQ = 60.0 
 DEBUG = True
 SIMULATED = False
-seed=2
-SUCCESS_THRESHOLD = 0.99
-#SUCCESS_THRESHOLD = 0.999
-serial_number = "Rizon4s-063126"
-# serial_number = None
+FORCE_SCALE = (12.5/125) # used only in simulation to scale forces
+seed=0 # one of the 3 seeds determining the initial state
 
+
+URDF_PATH = "robots/rizon4s_kinematics.urdf" 
 ROOT_LOG_FOLDER = "logs"
 CSV_FILENAME =  ROOT_LOG_FOLDER + "/sim2real_results.csv"
 PLOTS_FOLDER = ROOT_LOG_FOLDER + "/plots"
+
+if SIMULATED:
+    serial_number = None
+else:
+    serial_number = "Rizon4s-063126"
+
+# control parameters
+CONTROL_FREQ = 60.0
+SUCCESS_THRESHOLD = 0.99 # threshold for considering the task successful and stopping the control
+
+
 
 class FlexivAssemblyNode(Node):
     def __init__(self):
@@ -203,6 +211,8 @@ class FlexivAssemblyNode(Node):
             return 
 
         wrench_cleaned = curr_wrench - self.wrench_bias
+        if SIMULATED:
+            wrench_cleaned *= FORCE_SCALE
 
         # Metrics Update (Real-time)
         force_norm = np.linalg.norm(wrench_cleaned)

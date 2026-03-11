@@ -4,12 +4,7 @@ import torch
 from scipy.spatial.transform import Rotation as R
 
 DEBUG = True
-SIMULATION = False
-ROTATION = False
-if SIMULATION:
-    FORCE_SCALE = (12.5/150)
-else:
-    FORCE_SCALE = 1.0
+SIMULATION = True
 
 # INITIAL ROBOT POSE
 # deg: [-27.46, -45.05, 52.05, 92.91, -39.24, 28.07, -150.73]  
@@ -17,11 +12,10 @@ else:
 
 class FlexivGearAssemblyPolicy:
     def __init__(self, seed=0):
+        self.seed = seed
         # --- PATH CONFIG ---
-        if not ROTATION:
-            self.policy_path = r"robots/rizon/policies/policy.pt"
-        else:
-            self.policy_path = r"robots/rizon/policies/rotation_policy.pt"
+
+        self.policy_path = r"robots/rizon/policies/policy.pt"
 
         match seed:
             case 0: 
@@ -120,7 +114,7 @@ class FlexivGearAssemblyPolicy:
         # Applica Smoothing esponenziale
         alpha = self.ft_smoothing_factor
         self.force_sensor_world_smooth = alpha * current_force_world_raw + (1 - alpha) * self.force_sensor_world_smooth
-        current_force_obs = self.force_sensor_world_smooth * FORCE_SCALE
+        current_force_obs = self.force_sensor_world_smooth 
         pos_rel = current_ee_pos - self.fixed_pos
         masked_prev_actions = self.prev_action_smooth.copy()
         masked_prev_actions[3:5] = 0.0 
@@ -135,15 +129,6 @@ class FlexivGearAssemblyPolicy:
             self.force_threshold, # 1
         ]).astype(np.float32)
 
-        if ROTATION:
-            current_yaw = r_curr.as_euler('zyx')[0] 
-            target_yaw_error = self.target_yaw - current_yaw
-            target_yaw_error = (target_yaw_error + np.pi) % (2 * np.pi) - np.pi
-            common_obs = np.concatenate([
-                common_obs, 
-                np.array([target_yaw_error], dtype=np.float32)
-            ])
-
         obs_vec = np.concatenate([
             common_obs, 
             masked_prev_actions
@@ -156,10 +141,6 @@ class FlexivGearAssemblyPolicy:
             print(f"\n##################### Step: {self.step_counter} OBSERVATION #####################")
             keys = ["pos_rel", "quat", "lin_vel", "ang_vel", "force_smooth", "threshold", "prev_act"]
             vals = [pos_rel, current_ee_quat, lin_vel, ang_vel, current_force_obs, self.force_threshold, masked_prev_actions]
-
-            if ROTATION:
-                keys.insert(-1, 'yaw_error')
-                vals.insert(-1, np.array([target_yaw_error]))
 
             for key, val in zip(keys, vals):
                 print(f"{key:<15}: {np.array2string(val, precision=4, suppress_small=True)}")
