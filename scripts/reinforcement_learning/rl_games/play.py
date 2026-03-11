@@ -9,9 +9,11 @@
 
 import argparse
 import sys
+import matplotlib.pyplot as plt # [NEW] For plotting
+import numpy as np              # [NEW] For data handling
 
 from isaaclab.app import AppLauncher
-from policy_export import export_rl_games_policy # Assumendo che export_policy.py sia nella stessa dir
+from policy_export import export_rl_games_policy 
 
 
 # add argparse arguments
@@ -188,7 +190,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dt = env.unwrapped.step_dt
 
     # 1. Esporta la policy in ONNX e TorchScript (.pt)
-    export_rl_games_policy(agent, log_dir, task_name, rl_device)
+    # export_rl_games_policy(agent, log_dir, task_name, rl_device)
         
     # ----------------------------------------------------------------------
     # Fine Codice di Esportazione
@@ -207,10 +209,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # initialize RNN states if used
     if agent.is_rnn:
         agent.init_rnn()
+
+    # --- [NEW] FORENSIC LOGGING SETUP ---
+    print("\n🔍 STARTING FORENSIC LOGGING (Sim-to-Sim)...")
+    log_data = {
+        "steps": [],
+        "actions": [],      # [vx, vy, vz, wx, wy, wz]
+        "forces": [],       # [fx, fy, fz] from Observation
+        "success_pred": [], # From Action[6]
+        "rewards": []
+    }
+    # Observation Indices from your Config
+    IDX_FORCE_START = 13
+    IDX_FORCE_END = 16
+    MAX_STEPS = 400 
+    step_counter = 0
+    # ------------------------------------
+
     # simulate environment
-    # note: We simplified the logic in rl-games player.py (:func:`BasePlayer.run()`) function in an
-    #   attempt to have complete control over environment stepping. However, this removes other
-    #   operations such as masking that is used for multi-agent learning by RL-Games.
     while simulation_app.is_running():
         start_time = time.time()
         # run everything in inference mode
@@ -220,7 +236,55 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = agent.get_action(obs, is_deterministic=agent.is_deterministic)
             # env stepping
-            obs, _, dones, _ = env.step(actions)
+            obs, rew, dones, _ = env.step(actions)
+
+            # --- [FIXED] CAPTURE FORENSIC DATA ---
+            # We use Environment 0 for plotting
+            
+            # 1. Handle Observation Dictionary
+            if isinstance(obs, dict):
+                # Try common keys used in Isaac Lab / RL Games
+                if "policy" in obs:
+                    raw_obs_tensor = obs["policy"]
+                elif "obs" in obs:
+                    raw_obs_tensor = obs["obs"]
+                else:
+                    # Fallback: grab the first value available
+                    raw_obs_tensor = next(iter(obs.values()))
+            else:
+                raw_obs_tensor = obs
+
+            # 2. Slice the first environment
+            current_obs = raw_obs_tensor[0].detach().cpu().numpy()
+            
+            # 3. Actions and Rewards (Usually tensors)
+            current_action = actions[0].detach().cpu().numpy()
+            current_rew = rew[0].item()
+
+            log_data["steps"].append(step_counter)
+
+            # 1. Scale Actions (To match Deployment Plots)
+            scaled_action = current_action.copy()
+            scaled_action[0:3] *= 0.05  # Pos Scale from assembly.py
+            scaled_action[3:6] *= 1.0   # Rot Scale from assembly.py
+            log_data["actions"].append(scaled_action[:6]) 
+
+            # 2. Success Prediction
+            raw_pred = current_action[6]
+            prob_pred = (raw_pred + 1.0) / 2.0
+            log_data["success_pred"].append(prob_pred)
+
+            # 3. Forces (Observed)
+            force_obs = current_obs[IDX_FORCE_START:IDX_FORCE_END]
+            log_data["forces"].append(force_obs)
+
+            log_data["rewards"].append(current_rew)
+            step_counter += 1
+
+            if dones[0] or step_counter >= MAX_STEPS:
+                print(f"🛑 Episode ended at step {step_counter}. Generating Forensic Plot...")
+                break
+            # -----------------------------------
 
             # perform operations for terminated episodes
             if len(dones) > 0:
@@ -238,6 +302,50 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
+
+    # --- [NEW] PLOTTING LOGIC ---
+    save_dir = "logs/play_forensics"
+    os.makedirs(save_dir, exist_ok=True)
+
+    steps = np.array(log_data["steps"])
+    actions = np.array(log_data["actions"])
+    forces = np.array(log_data["forces"])
+    success = np.array(log_data["success_pred"])
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+
+    # Plot 1: Actions (Twist)
+    axs[0].plot(steps, actions[:, 0], label='Vx (Rel)', color='r', linestyle='-')
+    axs[0].plot(steps, actions[:, 1], label='Vy (Rel)', color='g', linestyle='-')
+    axs[0].plot(steps, actions[:, 2], label='Vz (Rel)', color='b', linestyle='-')
+    axs[0].set_title(f"1. Policy Actions (Twist) - {task_name}")
+    axs[0].set_ylabel("Scaled Action (m/s)")
+    axs[0].legend(ncol=3, fontsize='small')
+    axs[0].grid(True, alpha=0.3)
+
+    # Plot 2: Forces (What the Policy SEES)
+    axs[1].plot(steps, forces[:, 0], label='Fx (Obs)', color='r', alpha=0.7)
+    axs[1].plot(steps, forces[:, 1], label='Fy (Obs)', color='g', alpha=0.7)
+    axs[1].plot(steps, forces[:, 2], label='Fz (Obs)', color='b', alpha=0.7)
+    axs[1].set_title("2. Forces Observed by Policy")
+    axs[1].set_ylabel("Force (N)")
+    axs[1].legend(loc='upper right')
+    axs[1].grid(True, alpha=0.3)
+
+    # Plot 3: Success Prediction
+    axs[2].plot(steps, success, label='Success Prob', color='purple', linewidth=2)
+    axs[2].axhline(y=0.9, color='k', linestyle='--', label='Threshold')
+    axs[2].set_title("3. Policy Self-Confidence")
+    axs[2].set_ylabel("Probability [0-1]")
+    axs[2].set_xlabel("Sim Steps")
+    axs[2].legend()
+    axs[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plot_path = os.path.join(save_dir, "sim_forensics.png")
+    plt.savefig(plot_path)
+    print(f"🖼️ FORENSIC PLOT SAVED: {plot_path}")
+    # ----------------------------
 
     # close the simulator
     env.close()

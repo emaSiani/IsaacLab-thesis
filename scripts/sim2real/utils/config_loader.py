@@ -201,19 +201,6 @@ def get_robot_joint_properties(
     )
 
 
-# def get_articulation_props(data: dict) -> dict:
-#     """
-#     Gets the articulation properties from the environment configuration data.
-
-#     Args:
-#         data (dict): The environment configuration data.
-
-#     Returns:
-#         dict: The articulation properties.
-#     """
-#     return data.get("scene").get("robot").get("spawn").get("articulation_props")
-
-
 def get_physics_properties(data: dict) -> dict:
     """
     Gets the physics properties from the environment configuration data.
@@ -225,42 +212,3 @@ def get_physics_properties(data: dict) -> dict:
         tuple: A tuple containing the decimation, dt, and render interval.
     """
     return data.get("decimation"), data.get("sim").get("dt"), data.get("sim").get("render_interval")
-
-
-# def get_observations(data: dict) -> dict:
-#     """
-#     Gets the observations from the environment configuration data.
-
-#     Args:
-#         data (dict): The environment configuration data.
-
-#     Returns:
-#         dict: The observations.
-#     """
-#     return data.get("observations").get("policy")
-
-
-# def get_action(data: dict) -> dict:
-#     """
-#     Gets the actions from the environment configuration data.
-
-#     Args:
-#         data (dict): The environment configuration data.
-
-#     Returns:
-#         dict: The actions.
-#     """
-#     return data.get("actions")
-
-
-# def get_physx_settings(data: dict) -> dict:
-#     """
-#     Gets the PhysX settings from the environment configuration data.
-
-#     Args:
-#         data (dict): The environment configuration data.
-
-#     Returns:
-#         dict: The PhysX settings.
-#     """
-#     return data.get("sim").get("physx")

@@ -16,7 +16,7 @@ class SimAdapter(Node):
         # CONFIG
         self.SN = "" # MATCH YOUR SN
         self.BASE_LINK = "base_link" # Make sure this matches your USD/URDF base name
-        self.TCP_LINK = "fingertip_midpoint"
+        self.TCP_LINK = "flange"
         
         # 1. Pubs/Subs
         self.pub_states = self.create_publisher(RobotStates, f"/{self.SN}/flexiv_robot_states", 10) if self.SN else self.create_publisher(RobotStates, "/flexiv_robot_states", 10)
@@ -77,9 +77,9 @@ class SimAdapter(Node):
         try:
             t = self.tf_buffer.lookup_transform(self.BASE_LINK, self.TCP_LINK, rclpy.time.Time())
             
-            msg.tcp_pose.pose.position.x = t.transform.translation.x
-            msg.tcp_pose.pose.position.y = t.transform.translation.y
-            msg.tcp_pose.pose.position.z = t.transform.translation.z
+            msg.flange_pose.pose.position.x = t.transform.translation.x
+            msg.flange_pose.pose.position.y = t.transform.translation.y
+            msg.flange_pose.pose.position.z = t.transform.translation.z
             msg.tcp_pose.pose.orientation = t.transform.rotation
         except Exception as e:
             # Uncomment to debug if frames are missing

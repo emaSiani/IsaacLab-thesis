@@ -746,6 +746,29 @@ class Rizon4sFactoryEnv(DirectRLEnv):
         )
         self.fixed_pos_obs_frame[:] = fixed_tip_pos
 
+        # --- [DEBUG] STAMPA POSIZIONI TRAINING ---
+        # Stampiamo solo per il primo environment che viene resettato per evitare spam
+        if len(env_ids) > 0:
+            idx = env_ids[0]
+            
+            # 1. Posizione della BASE (l'origine del USD del Fixed Asset)
+            base_pos = self.fixed_pos[idx].cpu().numpy()
+            
+            # 2. Posizione del TARGET (il punto che la policy deve raggiungere)
+            target_pos = self.fixed_pos_obs_frame[idx].cpu().numpy()
+            
+            # 3. Calcolo dell'OFFSET esatto
+            offset = target_pos - base_pos
+
+            print(f"\n================ [DEBUG TRAIN OFFSET] ================")
+            print(f"1. BASE REF (Origine USD):    {base_pos}")
+            print(f"2. OBS FRAME (Target Policy): {target_pos}")
+            print(f"------------------------------------------------------")
+            print(f"3. >>> OFFSET DA USARE <<< :  {offset}")
+            print(f"   (Copia questo vettore offset nel tuo script di deploy)")
+            print(f"======================================================\n")
+        # -------------------------------------------
+
         # (2) Move gripper to randomizes location above fixed asset. Keep trying until IK succeeds.
         # (a) get position vector to target
         bad_envs = env_ids.clone()
